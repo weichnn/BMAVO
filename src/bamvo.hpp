@@ -34,8 +34,8 @@ namespace goodguy{
                 }
 
                 if(!m_curr_depth.empty()){
+                    m_hist_poses.emplace_back(std::make_shared<Eigen::Matrix4f>(Eigen::Matrix4f(Eigen::Matrix4f::Identity())));
                     m_hist_depth.emplace_back(std::make_shared<Eigen::MatrixXf>(cv2eigen(m_curr_depth)));
-                    m_hist_poses.emplace_back(std::make_shared<Eigen::Matrix4f>(Eigen::Matrix4f::Identity()));
                     m_hist_point_cloud.emplace_back(generate_point_cloud(*(m_hist_depth.back())));
 
 
@@ -57,6 +57,7 @@ namespace goodguy{
                 m_curr_depth.copyTo(m_prev_depth);
                 color.copyTo(m_curr_color);
                 depth.copyTo(m_curr_depth);
+
 
                 
                 m_time.global_tic();
@@ -111,6 +112,7 @@ namespace goodguy{
 
             std::shared_ptr<Eigen::MatrixXf> calculate_derivative_x(const std::shared_ptr<Eigen::MatrixXf>& intensity){
                 std::shared_ptr<Eigen::MatrixXf> derivative_x(new Eigen::MatrixXf(Eigen::MatrixXf::Zero(intensity->rows(), intensity->cols())));
+
                 auto lambda_for_derivative = [&](const tbb::blocked_range<int>& r){
                     for(int i = r.begin(); i < r.end(); ++i){
                         for(int j = 0; j < intensity->cols(); ++j){
@@ -133,22 +135,72 @@ namespace goodguy{
                         }
                     }
                 };
+                //tbb::parallel_for(tbb::blocked_range<int>(0,intensity->rows()), lambda_for_derivative);
 
                 __m128* derivative_x_sse = (__m128*)derivative_x->data();
                 auto lambda_for_derivative3 = [&](const tbb::blocked_range<int>& r){
-                    for(int i = r.begin(); i < r.end(); ++i){
-                        for(int j = 0; j < intensity->cols(); ++j){
+                    for(int j = r.begin(); j < r.end(); ++j){
+                        for(int i = 0; i < intensity->rows()/4; ++i){
+                            int index = j*(intensity->rows()/4) + i;
+
+
                             int left = std::max(j-1, 0);
                             int right = std::min(j+1, (int)intensity->cols()-1);
-                            int up = std::max(i-1, 0);
-                            int down = std::min(i+1, (int)intensity->rows()-1);
+
+                            int up = std::max(i*4-1, 0);
+                            int down = std::min(i*4+4, (int)intensity->rows()-1);
+
+                            /*
+                            __m128 ul, ur;
+                            if((i*4-1) < 0){
+                                ul = _mm_set_ps((*intensity)(up+0, left), (*intensity)(up+0, left), (*intensity)(up+1, left), (*intensity)(up+2, left));
+                                ur = _mm_set_ps((*intensity)(up+0, right), (*intensity)(up+0, right), (*intensity)(up+1, right), (*intensity)(up+2, right));
+                            }
+                            else{
+                                ul = _mm_load_ps(intensity->data()+left*intensity->rows()+up);
+                                ur = _mm_load_ps(intensity->data()+right*intensity->rows()+up);
+                            }
+                            */
+
+
+                            __m128 cl = _mm_load_ps(intensity->data()+left*intensity->rows()+i*4);
+                            __m128 cr = _mm_load_ps(intensity->data()+right*intensity->rows()+i*4);
+
+
+                            /*
+                            __m128 dl, dr;
+                            if(i*4+4 > ((int)intensity->rows()-1)){
+                                dl = _mm_set_ps((*intensity)(down-2, left), (*intensity)(down-1, left), (*intensity)(down-0, left), (*intensity)(down-0, left));
+                                dr = _mm_set_ps((*intensity)(down-2, right), (*intensity)(down-1, right), (*intensity)(down-0, right), (*intensity)(down-0, right));
+                            }
+                            else{
+                                dl = _mm_load_ps(intensity->data()+left*intensity->rows()+down-3);
+                                dr = _mm_load_ps(intensity->data()+right*intensity->rows()+down-3);
+                            }
+                            */
+
+                            //__m128 val =  _mm_add_ps(_mm_add_ps(_mm_add_ps(ur, dr), cr), cr);
+                            //val = _mm_sub_ps(_mm_sub_ps(_mm_sub_ps(_mm_sub_ps(val, ul), dl), cl), cl);
+                            __m128 val = _mm_sub_ps(cr, cl);
+
+
+                            _mm_store_ps(derivative_x->data()+j*(int)intensity->rows()+4*i, val);
+
+
+                            //derivative_x_sse[index] = _mm_add_ps(_mm_add_ps(_mm_add_ps(ur, dr), cr), cr);
+                            //derivative_x_sse[index] = _mm_sub_ps(_mm_sub_ps(_mm_sub_ps(_mm_sub_ps(derivative_x_sse[index], ul), dl), cl), cl);
+
+
+
+                            /*
                             (*derivative_x)(i,j)  = (*intensity)(up, right) + 2.0*(*intensity)(i, right) + (*intensity)(down, right);
                             (*derivative_x)(i,j)  += -(*intensity)(up, left) - 2.0*(*intensity)(i, left) - (*intensity)(down, left);
                             (*derivative_x)(i,j) *= 1/8.0;
+                            */
                         }
                     }
                 };
-                tbb::parallel_for(tbb::blocked_range<int>(0,intensity->rows()), lambda_for_derivative2);
+                tbb::parallel_for(tbb::blocked_range<int>(0,intensity->cols()), lambda_for_derivative3);
 
                 return derivative_x;
             }
@@ -235,7 +287,7 @@ namespace goodguy{
                 std::vector<Eigen::MatrixXf> warped_hist_point_clouds(point_clouds.size());
 
                 Eigen::Matrix4f warp_pose = Eigen::Matrix4f::Identity();
-                std::vector<Eigen::Matrix4f> poses_accumulate(point_clouds.size());
+                std::vector<Eigen::Matrix4f> poses_accumulate(point_clouds.size(), Eigen::Matrix4f::Identity());
                 auto it_for_poses = poses.rbegin();
                 auto it_for_poses_acc = poses_accumulate.rbegin();
                 for(std::size_t i = 0; i < point_clouds.size(); ++i){

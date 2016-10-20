@@ -25,7 +25,7 @@ namespace goodguy{
             camera_params.cx = 292.782603;
             camera_params.cy = 226.667207;
 
-            hist_size = 4;
+            hist_size = 10;
             sig_min = 0.000001;
 
             vel_dyn = 1.0;
