@@ -137,12 +137,9 @@ namespace goodguy{
                 };
                 //tbb::parallel_for(tbb::blocked_range<int>(0,intensity->rows()), lambda_for_derivative);
 
-                __m128* derivative_x_sse = (__m128*)derivative_x->data();
                 auto lambda_for_derivative3 = [&](const tbb::blocked_range<int>& r){
                     for(int j = r.begin(); j < r.end(); ++j){
                         for(int i = 0; i < intensity->rows()/4; ++i){
-                            int index = j*(intensity->rows()/4) + i;
-
 
                             int left = std::max(j-1, 0);
                             int right = std::min(j+1, (int)intensity->cols()-1);
@@ -150,41 +147,38 @@ namespace goodguy{
                             int up = std::max(i*4-1, 0);
                             int down = std::min(i*4+4, (int)intensity->rows()-1);
 
-                            /*
                             __m128 ul, ur;
                             if((i*4-1) < 0){
-                                ul = _mm_set_ps((*intensity)(up+0, left), (*intensity)(up+0, left), (*intensity)(up+1, left), (*intensity)(up+2, left));
-                                ur = _mm_set_ps((*intensity)(up+0, right), (*intensity)(up+0, right), (*intensity)(up+1, right), (*intensity)(up+2, right));
+                                ul = _mm_set_ps((*intensity)(up+2, left), (*intensity)(up+2, left), (*intensity)(up+1, left), (*intensity)(up+0, left));
+                                ur = _mm_set_ps((*intensity)(up+2, right), (*intensity)(up+2, right), (*intensity)(up+1, right), (*intensity)(up+0, right));
                             }
                             else{
-                                ul = _mm_load_ps(intensity->data()+left*intensity->rows()+up);
-                                ur = _mm_load_ps(intensity->data()+right*intensity->rows()+up);
+                                ul = _mm_set_ps((*intensity)(up+3, left), (*intensity)(up+2, left), (*intensity)(up+1, left), (*intensity)(up+0, left));
+                                ur = _mm_set_ps((*intensity)(up+3, right), (*intensity)(up+2, right), (*intensity)(up+1, right), (*intensity)(up+0, right));
                             }
-                            */
 
 
                             __m128 cl = _mm_load_ps(intensity->data()+left*intensity->rows()+i*4);
                             __m128 cr = _mm_load_ps(intensity->data()+right*intensity->rows()+i*4);
 
 
-                            /*
                             __m128 dl, dr;
                             if(i*4+4 > ((int)intensity->rows()-1)){
-                                dl = _mm_set_ps((*intensity)(down-2, left), (*intensity)(down-1, left), (*intensity)(down-0, left), (*intensity)(down-0, left));
-                                dr = _mm_set_ps((*intensity)(down-2, right), (*intensity)(down-1, right), (*intensity)(down-0, right), (*intensity)(down-0, right));
+                                dl = _mm_set_ps((*intensity)(down-0, left), (*intensity)(down-0, left), (*intensity)(down-1, left), (*intensity)(down-2, left));
+                                dr = _mm_set_ps((*intensity)(down-0, right), (*intensity)(down-0, right), (*intensity)(down-1, right), (*intensity)(down-2, right));
                             }
                             else{
-                                dl = _mm_load_ps(intensity->data()+left*intensity->rows()+down-3);
-                                dr = _mm_load_ps(intensity->data()+right*intensity->rows()+down-3);
+                                dl = _mm_set_ps((*intensity)(down-0, left), (*intensity)(down-1, left), (*intensity)(down-2, left), (*intensity)(down-3, left));
+                                dr = _mm_set_ps((*intensity)(down-0, right), (*intensity)(down-1, right), (*intensity)(down-2, right), (*intensity)(down-3, right));
                             }
-                            */
 
-                            //__m128 val =  _mm_add_ps(_mm_add_ps(_mm_add_ps(ur, dr), cr), cr);
-                            //val = _mm_sub_ps(_mm_sub_ps(_mm_sub_ps(_mm_sub_ps(val, ul), dl), cl), cl);
-                            __m128 val = _mm_sub_ps(cr, cl);
+                            __m128 val =  _mm_add_ps(_mm_add_ps(_mm_add_ps(ur, dr), cr), cr);
+                            __m128 val2 = _mm_sub_ps(_mm_sub_ps(_mm_sub_ps(_mm_sub_ps(val, ul), dl), cl), cl);
+                            __m128 val3 = _mm_mul_ps(val2, _mm_set1_ps(0.125));
+                            //__m128 val = _mm_sub_ps(cr, cl);
 
 
-                            _mm_store_ps(derivative_x->data()+j*(int)intensity->rows()+4*i, val);
+                            _mm_store_ps(derivative_x->data()+j*(int)intensity->rows()+4*i, val3);
 
 
                             //derivative_x_sse[index] = _mm_add_ps(_mm_add_ps(_mm_add_ps(ur, dr), cr), cr);
@@ -205,6 +199,71 @@ namespace goodguy{
                 return derivative_x;
             }
 
+            std::shared_ptr<Eigen::MatrixXf> calculate_derivative_y(const std::shared_ptr<Eigen::MatrixXf>& intensity){
+                std::shared_ptr<Eigen::MatrixXf> derivative_y(new Eigen::MatrixXf(Eigen::MatrixXf::Zero(intensity->rows(), intensity->cols())));
+
+                auto lambda_for_derivative = [&](const tbb::blocked_range<int>& r){
+                    for(int j = r.begin(); j < r.end(); ++j){
+                        for(int i = 0; i < intensity->rows(); ++i){
+                            int prev = std::max(0, i-1);
+                            int next = std::min((int)intensity->rows()-1, i+1);
+                            (*derivative_y)(i,j) = ((*intensity)(next, j) - (*intensity)(prev, j))*0.5f;
+                        }
+                    }
+                };
+
+                __m128* derivative_y_sse = (__m128*)derivative_y->data();
+                auto lambda_for_derivative3 = [&](const tbb::blocked_range<int>& r){
+                    for(int j = r.begin(); j < r.end(); ++j){
+                        for(int i = 0; i < intensity->rows()/4; ++i){
+
+                            std::size_t index = j*(intensity->rows()/4)+i;
+
+                            int left = std::max(j-1, 0);
+                            int right = std::min(j+1, (int)intensity->cols()-1);
+
+                            int up = std::max(i*4-1, 0);
+                            int down = std::min(i*4+4, (int)intensity->rows()-1);
+
+                            __m128 ul, uc, ur;
+                            if((i*4-1) < 0){
+                                ul = _mm_set_ps((*intensity)(up+2, left), (*intensity)(up+1, left), (*intensity)(up+0, left), (*intensity)(up+0, left));
+                                uc = _mm_set_ps((*intensity)(up+2, j), (*intensity)(up+1, j), (*intensity)(up+0, j), (*intensity)(up+0, j));
+                                ur = _mm_set_ps((*intensity)(up+2, right), (*intensity)(up+1, right), (*intensity)(up+0, right), (*intensity)(up+0, right));
+                            }
+                            else{
+                                ul = _mm_set_ps((*intensity)(up+3, left), (*intensity)(up+2, left), (*intensity)(up+1, left), (*intensity)(up+0, left));
+                                uc = _mm_set_ps((*intensity)(up+3, j), (*intensity)(up+2, j), (*intensity)(up+1, j), (*intensity)(up+0, j));
+                                ur = _mm_set_ps((*intensity)(up+3, right), (*intensity)(up+2, right), (*intensity)(up+1, right), (*intensity)(up+0, right));
+                            }
+
+                            __m128 dl, dc, dr;
+                            if(i*4+4 > ((int)intensity->rows()-1)){
+                                dl = _mm_set_ps((*intensity)(down-0, left), (*intensity)(down-0, left), (*intensity)(down-1, left), (*intensity)(down-2, left));
+                                dc = _mm_set_ps((*intensity)(down-0, j), (*intensity)(down-0, j), (*intensity)(down-1, j), (*intensity)(down-2, j));
+                                dr = _mm_set_ps((*intensity)(down-0, right), (*intensity)(down-0, right), (*intensity)(down-1, right), (*intensity)(down-2, right));
+                            }
+                            else{
+                                dl = _mm_set_ps((*intensity)(down-0, left), (*intensity)(down-1, left), (*intensity)(down-2, left), (*intensity)(down-3, left));
+                                dc = _mm_set_ps((*intensity)(down-0, j), (*intensity)(down-1, j), (*intensity)(down-2, j), (*intensity)(down-3, j));
+                                dr = _mm_set_ps((*intensity)(down-0, right), (*intensity)(down-1, right), (*intensity)(down-2, right), (*intensity)(down-3, right));
+                            }
+
+                            __m128 val =  _mm_add_ps(_mm_add_ps(_mm_add_ps(dr, dl), dc), dc);
+                            __m128 val2 = _mm_sub_ps(_mm_sub_ps(_mm_sub_ps(_mm_sub_ps(val, ul), ur), uc), uc);
+                            __m128 val3 = _mm_mul_ps(val2, _mm_set1_ps(0.125));
+
+                            _mm_store_ps(derivative_y->data()+j*(int)intensity->rows()+4*i, val3);
+
+                        }
+                    }
+                };
+                tbb::parallel_for(tbb::blocked_range<int>(0,intensity->cols()), lambda_for_derivative3);
+                //lambda_for_derivative3(tbb::blocked_range<int>(0,intensity->cols()));
+
+                return derivative_y;
+            }
+
 
             Eigen::Matrix4f compute_odometry(
                     const std::shared_ptr<Eigen::MatrixXf>& bgm, 
@@ -214,14 +273,20 @@ namespace goodguy{
                     const std::shared_ptr<Eigen::MatrixXf>& curr_depth)
             {
                 ComputationTime odom_time("odometry");
-                odom_time.tic();
                 Eigen::Matrix4f odometry = Eigen::Matrix4f::Identity();
 
-                std::shared_ptr<Eigen::MatrixXf> derivative_x = calculate_derivative_x(curr_intensity);
-                cv::Mat derivative_x_cv = eigen2cv(*derivative_x);
-                cv::imshow("Derivative_X", derivative_x_cv);
 
+                odom_time.tic();
+                std::shared_ptr<Eigen::MatrixXf> derivative_x = calculate_derivative_x(curr_intensity);
                 odom_time.toc();
+                odom_time.tic();
+                std::shared_ptr<Eigen::MatrixXf> derivative_y = calculate_derivative_y(curr_intensity);
+                odom_time.toc();
+                cv::Mat derivative_x_cv = eigen2cv(*derivative_x);
+                cv::Mat derivative_y_cv = eigen2cv(*derivative_y);
+                cv::imshow("Derivative_x", derivative_x_cv);
+                cv::imshow("Derivative_y", derivative_y_cv);
+
 
                 return odometry;
             }
@@ -310,20 +375,6 @@ namespace goodguy{
                         std::shared_ptr<Eigen::MatrixXf> depth = generate_depth_from_point_cloud_sse(warped_hist_point_clouds[k]);
                         depth_differences[k] = std::make_shared<Eigen::MatrixXf>(Eigen::MatrixXf(depth->rows(), depth->cols()));
 
-                        /*
-                        __m128 *last_depth_sse = (__m128*)last_hist_depth->data();
-                        __m128 *hist_depth_sse = (__m128*)depth->data();
-                        __m128 *diff_depth_sse = (__m128*)depth_differences[k]->data();
-
-                        for(int i = 0; i < depth->rows()/4; ++i){
-                            for(int j = 0; j < depth->cols(); ++j){
-                                int index = j*(depth->rows()/4)+i;
-                                __m128 diff_pos_sse = _mm_sub_ps(last_depth_sse[index], hist_depth_sse[index]);
-                                __m128 diff_neg_sse = _mm_sub_ps(_mm_set1_ps(0.0), diff_pos_sse);
-                                diff_depth_sse[index] = _mm_max_ps(diff_pos_sse,diff_neg_sse);
-                            }
-                        }
-                        */
                         *(depth_differences[k]) = (*last_hist_depth - *depth).cwiseAbs();
                     }
                 };
@@ -548,9 +599,9 @@ namespace goodguy{
                 std::shared_ptr<Eigen::MatrixXf> depth(new Eigen::MatrixXf(Eigen::MatrixXf::Zero(rows,cols)));
 
                 for(std::size_t i = 0; i < size/4; ++i){
-                    __m128 d = _mm_set_ps(point_cloud(2,i*4+0),point_cloud(2,i*4+1),point_cloud(2,i*4+2),point_cloud(2,i*4+3));
-                    __m128 X = _mm_set_ps(point_cloud(0,i*4+0),point_cloud(0,i*4+1),point_cloud(0,i*4+2),point_cloud(0,i*4+3));
-                    __m128 Y = _mm_set_ps(point_cloud(1,i*4+0),point_cloud(1,i*4+1),point_cloud(1,i*4+2),point_cloud(1,i*4+3));
+                    __m128 d = _mm_set_ps(point_cloud(2,i*4+3),point_cloud(2,i*4+2),point_cloud(2,i*4+1),point_cloud(2,i*4+0));
+                    __m128 X = _mm_set_ps(point_cloud(0,i*4+3),point_cloud(0,i*4+2),point_cloud(0,i*4+1),point_cloud(0,i*4+0));
+                    __m128 Y = _mm_set_ps(point_cloud(1,i*4+3),point_cloud(1,i*4+2),point_cloud(1,i*4+1),point_cloud(1,i*4+0));
                     __m128 d_inv = _mm_rcp_ps(d);
 
                     __m128 x = _mm_add_ps(_mm_mul_ps(_mm_mul_ps(fx_sse, X), d_inv), cx_sse);
@@ -618,7 +669,7 @@ namespace goodguy{
 
                 __m128 one_sse = _mm_set1_ps(1);
 
-                __m128 delta_sse = _mm_set_ps(0,1,2,3);
+                __m128 delta_sse = _mm_set_ps(3,2,1,0);
 
 
                 for(int i = 0; i < depth.rows()/4; ++i){
@@ -626,7 +677,7 @@ namespace goodguy{
 
                         std::size_t index = j*(depth.rows()/4) + i;
 
-                        __m128 d = _mm_set_ps(depth(i*4+0, j), depth(i*4+1, j),depth(i*4+2, j),depth(i*4+3, j));
+                        __m128 d = _mm_set_ps(depth(i*4+3, j), depth(i*4+2, j),depth(i*4+1, j),depth(i*4+0, j));
                         __m128 x = _mm_set1_ps(j);
                         __m128 x1 = _mm_sub_ps(x, cx_sse);
                         __m128 x2 = _mm_mul_ps(x1, fx_inv_sse);

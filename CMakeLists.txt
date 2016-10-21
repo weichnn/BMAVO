@@ -30,7 +30,8 @@ include_directories(
   ${Boost_INCLUDE_DIR}
 )
 
-set(CMAKE_CXX_FLAGS "-W -Wall ${CMAKE_CXX_FLAGS} -std=c++11 -Ofast -msse -msse2 -msse3 -mavx -fopenmp -march=native -ffast-math ")
+
+set(CMAKE_CXX_FLAGS "-W -Wall ${CMAKE_CXX_FLAGS} -std=c++11 -Ofast -msse -msse2 -msse3 -mavx -fopenmp -march=native -ffast-math -m128bit-long-double")
 
 add_executable(bamvo_node src/bamvo_node.cpp)
 
