@@ -25,10 +25,10 @@ namespace goodguy{
             camera_params.cx = 292.782603;
             camera_params.cy = 226.667207;
 
-            hist_size = 10;
+            hist_size = 4;
             sig_min = 0.000001;
 
-            vel_dyn = 1.0;
+            bgm_level = 1.0; // Same as level for image pyramid
 
             iter_count.clear();
             iter_count.push_back(20);
@@ -51,10 +51,10 @@ namespace goodguy{
         float hist_size;
         float sig_min;
 
+        std::size_t bgm_level;
+
         depth_range range_bgm;
         depth_range range_odo;
-
-        float vel_dyn;
 
         camera_parameter camera_params;
 
