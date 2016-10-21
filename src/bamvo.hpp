@@ -25,32 +25,106 @@
 namespace goodguy{
     class bamvo{
         public:
-            bamvo(){ }
+            bamvo() : m_time("BAMVO") { }
 
             void add(const cv::Mat& color, const cv::Mat& depth){
+                m_time.global_tic();
                 if(depth.type() != CV_32FC1 || color.type() != CV_8UC3){ 
                     std::cerr << "Not supported data type!" << std::endl; 
                     return; 
                 }
 
-                if(!m_curr_depth.empty()){
+                if(m_curr_rgbd_pyramid.size() != 0){
                     m_hist_poses.emplace_back(std::make_shared<Eigen::Matrix4f>(Eigen::Matrix4f(Eigen::Matrix4f::Identity())));
-                    m_hist_depth.emplace_back(std::make_shared<Eigen::MatrixXf>(cv2eigen(m_curr_depth)));
-                    m_hist_point_cloud.emplace_back(generate_point_cloud(*(m_hist_depth.back())));
+                    m_hist_depth.emplace_back(m_curr_rgbd_pyramid[1]->get_depth());
+                    m_hist_point_cloud.emplace_back(m_curr_rgbd_pyramid[1]->get_point_cloud());
 
 
                     if(m_hist_depth.size() > m_param.hist_size){
                         m_hist_depth.pop_front();
                         m_hist_poses.pop_front();
                         m_hist_point_cloud.pop_front();
-
-                        //std::shared_ptr<Eigen::MatrixXf> temp_depth = generate_depth_from_point_cloud(*m_hist_point_cloud.back());
-                        //cv::Mat temp_cv = eigen2cv(*temp_depth);
-                        //cv::Mat temp_cv2 = eigen2cv(*m_hist_depth.back());
-                        //cv::imshow(std::string("TEMP2"), temp_cv);
-                        //cv::imshow(std::string("TEMP3"), temp_cv2);
                     }
                 }
+
+                std::swap(m_curr_rgbd_pyramid, m_prev_rgbd_pyramid);
+                m_curr_rgbd_pyramid.clear();
+
+                cv::Mat curr_gray;
+                cv::cvtColor(color, curr_gray, CV_BGR2GRAY);
+                cv::Mat curr_intensity;
+                curr_gray.convertTo(curr_intensity, CV_32FC1, 1.0/255.0);
+
+                std::shared_ptr<Eigen::MatrixXf> curr_intensity_eig = std::make_shared<Eigen::MatrixXf>(cv2eigen(curr_intensity));
+                std::shared_ptr<Eigen::MatrixXf> curr_depth_eig = std::make_shared<Eigen::MatrixXf>(cv2eigen(depth));
+                std::shared_ptr<Eigen::MatrixXf> curr_point_cloud_eig = generate_point_cloud_sse(curr_depth_eig);
+                std::shared_ptr<Eigen::MatrixXf> curr_derivative_x = calculate_derivative_x(curr_intensity_eig);
+                std::shared_ptr<Eigen::MatrixXf> curr_derivative_y = calculate_derivative_y(curr_intensity_eig);
+
+                m_time.tic();
+
+                //cv::Mat curr_derivative_x_cv = eigen2cv(*curr_derivative_x);
+                //cv::Mat curr_derivative_y_cv = eigen2cv(*curr_derivative_y);
+                //cv::imshow("Derivative_x", curr_derivative_x_cv);
+                //cv::imshow("Derivative_y", curr_derivative_y_cv);
+
+                m_curr_rgbd_pyramid.emplace_back(std::make_shared<goodguy::rgbd_image>(
+                            goodguy::rgbd_image(curr_intensity_eig, curr_depth_eig, curr_point_cloud_eig, curr_derivative_x, curr_derivative_y, m_param.camera_params)));
+
+
+                
+                for(std::size_t i = 1; i < m_param.iter_count.size(); ++i){
+                    std::shared_ptr<goodguy::rgbd_image> half_rgbd;
+                    std::shared_ptr<Eigen::MatrixXf> half_intensity = get_half_image(m_curr_rgbd_pyramid[i-1]->get_intensity());
+                    std::shared_ptr<Eigen::MatrixXf> half_depth = get_half_image(m_curr_rgbd_pyramid[i-1]->get_depth());
+                    std::shared_ptr<Eigen::MatrixXf> half_point_cloud = generate_point_cloud_sse(half_depth);
+                    std::shared_ptr<Eigen::MatrixXf> half_derivative_x = get_half_image(m_curr_rgbd_pyramid[i-1]->get_x_derivative());
+                    std::shared_ptr<Eigen::MatrixXf> half_derivative_y = get_half_image(m_curr_rgbd_pyramid[i-1]->get_y_derivative());
+                    goodguy::camera_parameter half_param = m_curr_rgbd_pyramid[i-1]->get_param();
+                    half_param.fx /= 2.0;
+                    half_param.fy /= 2.0;
+                    half_param.cx /= 2.0;
+                    half_param.cy /= 2.0;
+                    m_curr_rgbd_pyramid.emplace_back(std::make_shared<goodguy::rgbd_image>(
+                                goodguy::rgbd_image(half_intensity, half_depth, half_point_cloud, half_derivative_x, half_derivative_y, half_param)));
+
+                }
+                m_time.toc();
+                m_time.tic();
+
+                for(std::size_t i = 0; i < m_param.iter_count.size(); ++i){
+                    cv::Mat rgb = eigen2cv(*m_curr_rgbd_pyramid[i]->get_intensity());
+                    cv::Mat depth = eigen2cv(*m_curr_rgbd_pyramid[i]->get_depth());
+                    cv::Mat deri_x = eigen2cv(*m_curr_rgbd_pyramid[i]->get_x_derivative());
+                    cv::Mat deri_y = eigen2cv(*m_curr_rgbd_pyramid[i]->get_y_derivative());
+                    cv::imshow(std::string("Intensity ")+boost::lexical_cast<std::string>(i), rgb);
+                    cv::imshow(std::string("Depth ")+boost::lexical_cast<std::string>(i), depth);
+                    cv::imshow(std::string("Derivative X ")+boost::lexical_cast<std::string>(i), deri_x);
+                    cv::imshow(std::string("Derivative Y ")+boost::lexical_cast<std::string>(i), deri_y);
+                }
+
+
+                // Compute background model image
+                std::pair<std::shared_ptr<Eigen::MatrixXf>, std::shared_ptr<Eigen::MatrixXf>> bgm_set = compute_bgm(m_hist_point_cloud, m_hist_poses, m_curr_rgbd_pyramid[1]->get_param());
+
+                m_time.toc();
+                m_time.tic();
+
+                std::shared_ptr<Eigen::MatrixXf> bgm = std::get<0>(bgm_set);
+                std::shared_ptr<Eigen::MatrixXf> labeled_bgm = std::get<1>(bgm_set);
+
+                if(bgm != NULL){
+                    cv::Mat bgm_cv = eigen2cv(*bgm);
+                    cv::imshow("BGM", bgm_cv/100.0);
+                }
+                if(labeled_bgm != NULL){
+                    cv::Mat bgm_cv = eigen2cv(*labeled_bgm);
+                    cv::imshow("LABELED BGM", bgm_cv);
+                }
+                m_time.toc();
+
+                /*
+
 
                 // Copy images into current and previous
                 m_curr_color.copyTo(m_prev_color);
@@ -74,9 +148,9 @@ namespace goodguy{
                 if(labeled_bgm != NULL){
                     cv::Mat bgm_cv = eigen2cv(*labeled_bgm);
                     cv::imshow("LABELED BGM", bgm_cv);
-                }
+                    }
 
-                if(!m_curr_depth.empty() && !m_prev_depth.empty()){
+                    if(!m_curr_depth.empty() && !m_prev_depth.empty()){
                     std::shared_ptr<Eigen::MatrixXf> prev_depth_eig = std::make_shared<Eigen::MatrixXf>(cv2eigen(m_prev_depth));
                     std::shared_ptr<Eigen::MatrixXf> curr_depth_eig = std::make_shared<Eigen::MatrixXf>(cv2eigen(m_curr_depth));
 
@@ -90,18 +164,30 @@ namespace goodguy{
                     std::shared_ptr<Eigen::MatrixXf> prev_intensity_eig = std::make_shared<Eigen::MatrixXf>(cv2eigen(prev_intensity));
                     std::shared_ptr<Eigen::MatrixXf> curr_intensity_eig = std::make_shared<Eigen::MatrixXf>(cv2eigen(curr_intensity));
 
-                    // Compute Odometry
-                    Eigen::Matrix4f curr_pose = compute_odometry(bgm, prev_intensity_eig, prev_depth_eig, curr_intensity_eig, curr_depth_eig);
 
-                    // Current pose between current image and previous in the previous view point(t->t-1)
-                    if(m_hist_poses.size() != 0){
-                        //// Compute poses
+                    std::shared_ptr<Eigen::MatrixXf> derivative_x = calculate_derivative_x(curr_intensity_eig);
+                    std::shared_ptr<Eigen::MatrixXf> derivative_y = calculate_derivative_y(curr_intensity_eig);
+                    cv::Mat derivative_x_cv = eigen2cv(*derivative_x);
+                    cv::Mat derivative_y_cv = eigen2cv(*derivative_y);
+                    cv::imshow("Derivative_x", derivative_x_cv);
+                    cv::imshow("Derivative_y", derivative_y_cv);
 
-                        // Fix saved pose
-                        *(m_hist_poses.back()) = curr_pose;
-                    }
 
-                }
+
+                // Compute Odometry
+                Eigen::Matrix4f curr_pose = compute_odometry(bgm, prev_intensity_eig, prev_depth_eig, curr_intensity_eig, curr_depth_eig);
+
+                // Current pose between current image and previous in the previous view point(t->t-1)
+                if(m_hist_poses.size() != 0){
+                //// Compute poses
+
+                // Fix saved pose
+                 *(m_hist_poses.back()) = curr_pose;
+                 }
+
+                 }
+
+                 */
                 m_time.global_toc();
             }
 
@@ -109,6 +195,22 @@ namespace goodguy{
             bamvo_parameter& get_param(){ return m_param; }
 
         private:
+
+            std::shared_ptr<Eigen::MatrixXf> get_half_image(const std::shared_ptr<Eigen::MatrixXf>& image){
+
+                std::shared_ptr<Eigen::MatrixXf> half_image(new Eigen::MatrixXf(Eigen::MatrixXf::Zero(image->rows()/2, image->cols()/2)));
+
+                auto lambda_for_half = [&](const tbb::blocked_range<int>& r){
+                    for(int j = r.begin(); j < r.end(); j += 2){
+                        for(int i = 0; i < image->rows(); i += 2){
+                            (*half_image)(i/2,j/2) = (*image)(i,j);
+                        }
+                    }
+                };
+                tbb::parallel_for(tbb::blocked_range<int>(0,image->cols()), lambda_for_half);
+
+                return half_image;
+            }
 
             std::shared_ptr<Eigen::MatrixXf> calculate_derivative_x(const std::shared_ptr<Eigen::MatrixXf>& intensity){
                 std::shared_ptr<Eigen::MatrixXf> derivative_x(new Eigen::MatrixXf(Eigen::MatrixXf::Zero(intensity->rows(), intensity->cols())));
@@ -267,25 +369,11 @@ namespace goodguy{
 
             Eigen::Matrix4f compute_odometry(
                     const std::shared_ptr<Eigen::MatrixXf>& bgm, 
-                    const std::shared_ptr<Eigen::MatrixXf>& prev_intensity, 
-                    const std::shared_ptr<Eigen::MatrixXf>& prev_depth, 
-                    const std::shared_ptr<Eigen::MatrixXf>& curr_intensity, 
-                    const std::shared_ptr<Eigen::MatrixXf>& curr_depth)
+                    const std::vector<std::shared_ptr<goodguy::rgbd_image>>& prev_rgbd_pyramid, 
+                    const std::vector<std::shared_ptr<goodguy::rgbd_image>>& curr_rgbd_pyramid) 
             {
                 ComputationTime odom_time("odometry");
                 Eigen::Matrix4f odometry = Eigen::Matrix4f::Identity();
-
-
-                odom_time.tic();
-                std::shared_ptr<Eigen::MatrixXf> derivative_x = calculate_derivative_x(curr_intensity);
-                odom_time.toc();
-                odom_time.tic();
-                std::shared_ptr<Eigen::MatrixXf> derivative_y = calculate_derivative_y(curr_intensity);
-                odom_time.toc();
-                cv::Mat derivative_x_cv = eigen2cv(*derivative_x);
-                cv::Mat derivative_y_cv = eigen2cv(*derivative_y);
-                cv::imshow("Derivative_x", derivative_x_cv);
-                cv::imshow("Derivative_y", derivative_y_cv);
 
 
                 return odometry;
@@ -334,7 +422,8 @@ namespace goodguy{
 
             std::pair<std::shared_ptr<Eigen::MatrixXf>, std::shared_ptr<Eigen::MatrixXf>> compute_bgm(
                     const std::deque<std::shared_ptr<Eigen::MatrixXf>>& point_clouds,
-                    const std::deque<std::shared_ptr<Eigen::Matrix4f>>& poses)
+                    const std::deque<std::shared_ptr<Eigen::Matrix4f>>& poses, 
+                    const goodguy::camera_parameter& param)
             {
 
                 if(point_clouds.size() == 0){
@@ -369,10 +458,10 @@ namespace goodguy{
 
 
                 std::vector<std::shared_ptr<Eigen::MatrixXf>> depth_differences(point_clouds.size()-1);
-                const std::shared_ptr<Eigen::MatrixXf> last_hist_depth = generate_depth_from_point_cloud(warped_hist_point_clouds.back());
+                const std::shared_ptr<Eigen::MatrixXf> last_hist_depth = generate_depth_from_point_cloud_sse(warped_hist_point_clouds.back(), param);
                 auto lambda_for_calculate_depth_difference = [&](const tbb::blocked_range<std::size_t>& r){
                     for(std::size_t k = r.begin(); k < r.end(); ++k){
-                        std::shared_ptr<Eigen::MatrixXf> depth = generate_depth_from_point_cloud_sse(warped_hist_point_clouds[k]);
+                        std::shared_ptr<Eigen::MatrixXf> depth = generate_depth_from_point_cloud_sse(warped_hist_point_clouds[k], param);
                         depth_differences[k] = std::make_shared<Eigen::MatrixXf>(Eigen::MatrixXf(depth->rows(), depth->cols()));
 
                         *(depth_differences[k]) = (*last_hist_depth - *depth).cwiseAbs();
@@ -543,7 +632,7 @@ namespace goodguy{
             }
 
 
-            std::shared_ptr<Eigen::MatrixXf> generate_depth_from_point_cloud(const Eigen::MatrixXf& point_cloud){
+            std::shared_ptr<Eigen::MatrixXf> generate_depth_from_point_cloud(const Eigen::MatrixXf& point_cloud, const goodguy::camera_parameter& param){
                 std::size_t size = point_cloud.cols();
 
                 int cols = 0;
@@ -554,10 +643,11 @@ namespace goodguy{
                     return std::shared_ptr<Eigen::MatrixXf>();
                 }
 
-                const float& fx = m_param.camera_params.fx;
-                const float& fy = m_param.camera_params.fy;
-                const float& cx = m_param.camera_params.cx;
-                const float& cy = m_param.camera_params.cy;
+                const float& fx = param.fx;
+                const float& fy = param.fy;
+                const float& cx = param.cx;
+                const float& cy = param.cy;
+
                 std::shared_ptr<Eigen::MatrixXf> depth(new Eigen::MatrixXf(Eigen::MatrixXf::Zero(rows,cols)));
 
                 for(std::size_t i = 0; i < size; ++i){
@@ -574,7 +664,7 @@ namespace goodguy{
                 return depth;
             }
 
-            std::shared_ptr<Eigen::MatrixXf> generate_depth_from_point_cloud_sse(const Eigen::MatrixXf& point_cloud){
+            std::shared_ptr<Eigen::MatrixXf> generate_depth_from_point_cloud_sse(const Eigen::MatrixXf& point_cloud, const goodguy::camera_parameter& param){
                 std::size_t size = point_cloud.cols();
 
                 int cols = 0;
@@ -585,10 +675,10 @@ namespace goodguy{
                     return std::shared_ptr<Eigen::MatrixXf>();
                 }
 
-                const float& fx = m_param.camera_params.fx;
-                const float& fy = m_param.camera_params.fy;
-                const float& cx = m_param.camera_params.cx;
-                const float& cy = m_param.camera_params.cy;
+                const float& fx = param.fx;
+                const float& fy = param.fy;
+                const float& cx = param.cx;
+                const float& cy = param.cy;
 
 
                 __m128 fx_sse = _mm_set1_ps(fx);
@@ -623,9 +713,9 @@ namespace goodguy{
                 return depth;
             }
 
-            inline std::shared_ptr<Eigen::MatrixXf> generate_point_cloud(const Eigen::MatrixXf& depth){
+            inline std::shared_ptr<Eigen::MatrixXf> generate_point_cloud(const std::shared_ptr<Eigen::MatrixXf>& depth){
             //[[gnu::target("default")]] Eigen::MatrixXf generate_point_cloud(const Eigen::MatrixXf& depth){
-                std::size_t size = depth.cols()*depth.rows();
+                std::size_t size = depth->cols()*depth->rows();
 
                 std::shared_ptr<Eigen::MatrixXf> point_cloud(new Eigen::MatrixXf(4,size));
 
@@ -633,68 +723,59 @@ namespace goodguy{
                 const float& fy = m_param.camera_params.fy;
                 const float& cx = m_param.camera_params.cx;
                 const float& cy = m_param.camera_params.cy;
-                
-                for(int i = 0; i < depth.rows(); ++i){
-                    for(int j = 0; j < depth.cols(); ++j){
-                        std::size_t index = i*depth.cols() + j;
-                        float d = depth(i,j);
-                        (*point_cloud)(0,index) = (j-cx)*d*(1/fx);
-                        (*point_cloud)(1,index) = (i-cy)*d*(1/fy);
-                        (*point_cloud)(2,index) = d;
-                        (*point_cloud)(3,index) = 1;
+
+                auto lambda_for_pcl = [&](const tbb::blocked_range<int>& r){
+                    for(int j = r.begin(); j < r.end(); ++j){
+                        for(int i = 0; i < depth->rows(); ++i){
+                            std::size_t index = i*depth->cols() + j;
+                            float d = (*depth)(i,j);
+                            (*point_cloud)(0,index) = (j-cx)*d*(1/fx);
+                            (*point_cloud)(1,index) = (i-cy)*d*(1/fy);
+                            (*point_cloud)(2,index) = d;
+                            (*point_cloud)(3,index) = 1;
+                        }
                     }
-                }
+                };
+                tbb::parallel_for(tbb::blocked_range<int>(0,depth->cols()), lambda_for_pcl);
+
                 return point_cloud;
             }
 
-            inline std::shared_ptr<Eigen::MatrixXf> generate_point_cloud_sse(const Eigen::MatrixXf& depth){
+            inline std::shared_ptr<Eigen::MatrixXf> generate_point_cloud_sse(const std::shared_ptr<Eigen::MatrixXf>& depth){
             //[[gnu::target("sse3")]] Eigen::MatrixXf generate_point_cloud(const Eigen::MatrixXf& depth){
-                std::size_t size = depth.cols()*depth.rows();
+                std::size_t size = depth->cols()*depth->rows();
 
-                Eigen::MatrixXf point_cloud(size, 4);
+                std::shared_ptr<Eigen::MatrixXf> point_cloud(new Eigen::MatrixXf(4,size));
 
                 const float& fx = m_param.camera_params.fx;
                 const float& fy = m_param.camera_params.fy;
                 const float& cx = m_param.camera_params.cx;
                 const float& cy = m_param.camera_params.cy;
 
-                __m128 *point_cloud_sse = (__m128*)point_cloud.data();
-
-                __m128 fx_sse = _mm_set1_ps(fx);
-                __m128 fy_sse = _mm_set1_ps(fy);
-                __m128 fx_inv_sse = _mm_rcp_ps(fx_sse);
-                __m128 fy_inv_sse = _mm_rcp_ps(fy_sse);
-                __m128 cx_sse = _mm_set1_ps(cx);
-                __m128 cy_sse = _mm_set1_ps(cy);
-
-                __m128 one_sse = _mm_set1_ps(1);
-
-                __m128 delta_sse = _mm_set_ps(3,2,1,0);
+                __m128 *point_cloud_sse = (__m128*)point_cloud->data();
 
 
-                for(int i = 0; i < depth.rows()/4; ++i){
-                    for(int j = 0; j < depth.cols(); ++j){
+                __m128 f_sse = _mm_set_ps(1, 1, 1/fy, 1/fx);
+                __m128 c_sse = _mm_set_ps(0, 0, cy, cx);
 
-                        std::size_t index = j*(depth.rows()/4) + i;
 
-                        __m128 d = _mm_set_ps(depth(i*4+3, j), depth(i*4+2, j),depth(i*4+1, j),depth(i*4+0, j));
-                        __m128 x = _mm_set1_ps(j);
-                        __m128 x1 = _mm_sub_ps(x, cx_sse);
-                        __m128 x2 = _mm_mul_ps(x1, fx_inv_sse);
-                        __m128 x3 = _mm_mul_ps(x2, d);
-
-                        __m128 y = _mm_add_ps(_mm_set1_ps(i*4), delta_sse);
-                        __m128 y1 = _mm_sub_ps(y, cy_sse);
-                        __m128 y2 = _mm_mul_ps(y1, fy_inv_sse);
-                        __m128 y3 = _mm_mul_ps(y2, d);
-
-                        point_cloud_sse[index+0*size/4] = x3;
-                        point_cloud_sse[index+1*size/4] = y3;
-                        point_cloud_sse[index+2*size/4] = d;
-                        point_cloud_sse[index+3*size/4] = one_sse;
+                auto lambda_for_pcl = [&](const tbb::blocked_range<int>& r){
+                    for(int j = r.begin(); j < r.end(); ++j){
+                        for(int i = 0; i < depth->rows(); ++i){
+                            float d = (*depth)(i,j);
+                            __m128 z = _mm_set1_ps(d);
+                            __m128 p = _mm_set_ps(1/d, 1, i, j);
+                            __m128 p1 = _mm_sub_ps(p, c_sse);
+                            __m128 p2 = _mm_mul_ps(p1, f_sse);
+                            __m128 p3 = _mm_mul_ps(p2, z);
+                            point_cloud_sse[j*depth->rows()+i] = p3;
+                            
+                        }
                     }
-                }
-                return std::shared_ptr<Eigen::MatrixXf>(new Eigen::MatrixXf(point_cloud.transpose()));
+                };
+                tbb::parallel_for(tbb::blocked_range<int>(0,depth->cols()), lambda_for_pcl);
+
+                return point_cloud;
             }
 
 
@@ -715,11 +796,8 @@ namespace goodguy{
 
 
         private:
-            cv::Mat m_curr_color;
-            cv::Mat m_curr_depth;
-
-            cv::Mat m_prev_color;
-            cv::Mat m_prev_depth;
+            std::vector<std::shared_ptr<goodguy::rgbd_image>> m_curr_rgbd_pyramid;
+            std::vector<std::shared_ptr<goodguy::rgbd_image>> m_prev_rgbd_pyramid;
 
             Eigen::MatrixXf m_bgm;
 
