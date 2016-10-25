@@ -205,8 +205,8 @@ namespace goodguy{
 
 
                         if(residuals != NULL){
-                            //cv::Mat residuals_cv = eigen2cv(*residuals);
-                            //cv::imshow(std::string("Residuals ")+boost::lexical_cast<std::string>(level), residuals_cv*10);
+                            cv::Mat residuals_cv = eigen2cv(*residuals);
+                            cv::imshow(std::string("Residuals ")+boost::lexical_cast<std::string>(level), residuals_cv*10);
                         }
                     }
 
@@ -241,6 +241,7 @@ namespace goodguy{
                 }
 
                 corresps->setZero();
+                residuals->setZero();
 
                 const float& fx = cparam.fx;
                 const float& fy = cparam.fy;
@@ -268,6 +269,8 @@ namespace goodguy{
                     for(int y0 = 0; y0 < rows; ++y0){
                         float d0 = (*prev_depth)(y0, x0);
 
+                        if(d0 < m_param.range_odo.min && d0 > m_param.range_odo.max)    continue;
+
                         float d1_warp = d0 *(KRK_inv(2,0)*x0+KRK_inv(2,1)*y0+KRK_inv(2,2)) + Kt(2);
                         float x1_warp = (d0 *(KRK_inv(0,0)*x0+KRK_inv(0,1)*y0+KRK_inv(0,2)) + Kt(0))/d1_warp;
                         float y1_warp = (d0 *(KRK_inv(1,0)*x0+KRK_inv(1,1)*y0+KRK_inv(1,2)) + Kt(1))/d1_warp;
@@ -275,8 +278,13 @@ namespace goodguy{
                         int x1_warp_int = std::floor(x1_warp);
                         int y1_warp_int = std::floor(y1_warp);
 
+
                         if(x1_warp_int >= 0 && x1_warp_int < cols-1 && y1_warp_int >= 0 && y1_warp_int < rows-1){
                             (*corresps)(y0, x0) = 1.0;
+
+                            float d1 = (*curr_depth)(y1_warp_int, x1_warp_int);
+                            if(d1 < m_param.range_odo.min && d1 > m_param.range_odo.max)    continue;
+
                             float x1w = x1_warp - x1_warp_int;
                             float x0w = 1.0 - x1w;
                             float y1w = y1_warp - y1_warp_int;
