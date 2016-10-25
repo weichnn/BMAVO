@@ -64,12 +64,12 @@ namespace goodguy{
             }
 
 
-            std::shared_ptr<Eigen::MatrixXf> get_intensity() const { return m_intensity; }
-            std::shared_ptr<Eigen::MatrixXf> get_depth() const { return m_depth; }
-            std::shared_ptr<Eigen::MatrixXf> get_point_cloud() const { return m_point_cloud; }
-            std::shared_ptr<Eigen::MatrixXf> get_x_derivative() const { return m_x_derivative; }
-            std::shared_ptr<Eigen::MatrixXf> get_y_derivative() const { return m_y_derivative; }
-            camera_parameter get_param() const { return m_param; }
+            std::shared_ptr<Eigen::MatrixXf>& get_intensity() { return m_intensity; }
+            std::shared_ptr<Eigen::MatrixXf>& get_depth() { return m_depth; }
+            std::shared_ptr<Eigen::MatrixXf>& get_point_cloud() { return m_point_cloud; }
+            std::shared_ptr<Eigen::MatrixXf>& get_x_derivative() { return m_x_derivative; }
+            std::shared_ptr<Eigen::MatrixXf>& get_y_derivative() { return m_y_derivative; }
+            camera_parameter& get_param() { return m_param; }
 
         private:
 

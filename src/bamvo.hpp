@@ -121,20 +121,19 @@ namespace goodguy{
 
 
                 // Show pyramid for RGB-D
-                
                 if(false)
-                for(std::size_t i = 0; i < m_param.iter_count.size(); ++i){
-                    cv::Mat rgb = eigen2cv(*m_curr_rgbd_pyramid[i]->get_intensity());
-                    cv::Mat depth = eigen2cv(*m_curr_rgbd_pyramid[i]->get_depth());
-                    cv::Mat deri_x = eigen2cv(*m_curr_rgbd_pyramid[i]->get_x_derivative());
-                    cv::Mat deri_y = eigen2cv(*m_curr_rgbd_pyramid[i]->get_y_derivative());
-                    cv::Mat bgm_cv = eigen2cv(*bgm[i]);
-                    cv::imshow(std::string("Intensity ")+boost::lexical_cast<std::string>(i), rgb);
-                    cv::imshow(std::string("Depth ")+boost::lexical_cast<std::string>(i), depth);
-                    cv::imshow(std::string("Derivative X ")+boost::lexical_cast<std::string>(i), deri_x);
-                    cv::imshow(std::string("Derivative Y ")+boost::lexical_cast<std::string>(i), deri_y);
-                    cv::imshow(std::string("BGM ")+boost::lexical_cast<std::string>(i), bgm_cv/20.0);
-                }
+                    for(std::size_t i = 0; i < m_param.iter_count.size(); ++i){
+                        cv::Mat rgb = eigen2cv(*m_curr_rgbd_pyramid[i]->get_intensity());
+                        cv::Mat depth = eigen2cv(*m_curr_rgbd_pyramid[i]->get_depth());
+                        cv::Mat deri_x = eigen2cv(*m_curr_rgbd_pyramid[i]->get_x_derivative());
+                        cv::Mat deri_y = eigen2cv(*m_curr_rgbd_pyramid[i]->get_y_derivative());
+                        cv::Mat bgm_cv = eigen2cv(*bgm[i]);
+                        cv::imshow(std::string("Intensity ")+boost::lexical_cast<std::string>(i), rgb);
+                        cv::imshow(std::string("Depth ")+boost::lexical_cast<std::string>(i), depth);
+                        cv::imshow(std::string("Derivative X ")+boost::lexical_cast<std::string>(i), deri_x);
+                        cv::imshow(std::string("Derivative Y ")+boost::lexical_cast<std::string>(i), deri_y);
+                        cv::imshow(std::string("BGM ")+boost::lexical_cast<std::string>(i), bgm_cv/20.0);
+                    }
 
 
                 m_time.toc();
@@ -170,6 +169,7 @@ namespace goodguy{
 
             {
                 ComputationTime odom_time("odometry");
+                odom_time.global_tic();
                 Eigen::Matrix4f odometry = Eigen::Matrix4f::Identity();
 
                 if(prev_rgbd_pyramid.size() != curr_rgbd_pyramid.size() 
@@ -181,21 +181,161 @@ namespace goodguy{
                     return odometry;
                 }
 
-                std::size_t max_level = prev_rgbd_pyramid.size()-1;
+                int max_level = prev_rgbd_pyramid.size()-1;
 
-                for(std::size_t level = max_level; level < 0; --level){
+
+                for(int level = max_level; level >= 0; --level){
                     const goodguy::camera_parameter& param = curr_rgbd_pyramid[level]->get_param();
 
+                    const int rows = curr_rgbd_pyramid[level]->get_intensity()->rows();
+                    const int cols = curr_rgbd_pyramid[level]->get_intensity()->cols();
 
+                    std::shared_ptr<Eigen::MatrixXf> residuals;
+                    std::shared_ptr<Eigen::MatrixXf> corresps;
 
+                    const std::shared_ptr<goodguy::rgbd_image>& prev = prev_rgbd_pyramid[level];
+                    const std::shared_ptr<goodguy::rgbd_image>& curr = curr_rgbd_pyramid[level];
+                    
                     for(int iter = 0; iter < iter_count[level]; ++iter){
+
+                        residuals = compute_residuals(prev, curr, odometry, param, residuals, corresps);
+
+
+                        std::cout <<"LV: " << level << " " << iter <<std::endl;
+
+
+                        if(residuals != NULL){
+                            //cv::Mat residuals_cv = eigen2cv(*residuals);
+                            //cv::imshow(std::string("Residuals ")+boost::lexical_cast<std::string>(level), residuals_cv*10);
+                        }
+                    }
+
+                }
+
+
+                odom_time.global_toc();
+                return odometry;
+            }
+
+            std::shared_ptr<Eigen::MatrixXf> compute_residuals(
+                    const std::shared_ptr<goodguy::rgbd_image>& prev, 
+                    const std::shared_ptr<goodguy::rgbd_image>& curr, 
+                    const Eigen::Matrix4f& transform,
+                    const goodguy::camera_parameter& cparam, 
+                    std::shared_ptr<Eigen::MatrixXf>& residuals,
+                    std::shared_ptr<Eigen::MatrixXf>& corresps)
+            {
+                ComputationTime time("residuals");
+
+                time.tic();
+
+
+                const int rows = prev->get_intensity()->rows();
+                const int cols = prev->get_intensity()->cols();
+
+                if(residuals == NULL){
+                    residuals = std::make_shared<Eigen::MatrixXf>(Eigen::MatrixXf(rows, cols));
+                }
+                if(corresps == NULL){
+                    corresps = std::make_shared<Eigen::MatrixXf>(Eigen::MatrixXf(rows, cols));
+                }
+
+                corresps->setZero();
+
+                const float& fx = cparam.fx;
+                const float& fy = cparam.fy;
+                const float& cx = cparam.cx;
+                const float& cy = cparam.cy;
+
+                Eigen::MatrixXf transformed_curr_point_cloud = transform_point_cloud_sse(*prev->get_point_cloud(), transform);
+                time.toc();
+                time.tic();
+
+                const std::shared_ptr<Eigen::MatrixXf>& prev_intensity = prev->get_intensity();
+                const std::shared_ptr<Eigen::MatrixXf>& curr_intensity = curr->get_intensity();
+
+                const std::shared_ptr<Eigen::MatrixXf>& prev_depth = prev->get_depth();
+                const std::shared_ptr<Eigen::MatrixXf>& curr_depth = curr->get_depth();
+
+                Eigen::Matrix3f K = Eigen::Matrix3f::Identity();
+                K(0,0) = fx; K(1,1) = fy; K(0,2) = cx; K(1,2) = cy;
+
+                Eigen::Matrix3f R = transform.block<3,3>(0,0);
+                Eigen::Matrix3f KRK_inv = K*R*K.inverse();
+                Eigen::Vector3f Kt = K*transform.block<3,1>(0,3);
+
+                for(int x0 = 0; x0 < cols; ++x0){
+                    for(int y0 = 0; y0 < rows; ++y0){
+                        float d0 = (*prev_depth)(y0, x0);
+
+                        float d1_warp = d0 *(KRK_inv(2,0)*x0+KRK_inv(2,1)*y0+KRK_inv(2,2)) + Kt(2);
+                        float x1_warp = (d0 *(KRK_inv(0,0)*x0+KRK_inv(0,1)*y0+KRK_inv(0,2)) + Kt(0))/d1_warp;
+                        float y1_warp = (d0 *(KRK_inv(1,0)*x0+KRK_inv(1,1)*y0+KRK_inv(1,2)) + Kt(1))/d1_warp;
+
+                        int x1_warp_int = std::floor(x1_warp);
+                        int y1_warp_int = std::floor(y1_warp);
+
+                        if(x1_warp_int >= 0 && x1_warp_int < cols-1 && y1_warp_int >= 0 && y1_warp_int < rows-1){
+                            (*corresps)(y0, x0) = 1.0;
+                            float x1w = x1_warp - x1_warp_int;
+                            float x0w = 1.0 - x1w;
+                            float y1w = y1_warp - y1_warp_int;
+                            float y0w = 1.0 - y1w;
+
+                            float x0y0 = (*curr_intensity)(y1_warp+0, x1_warp+0);
+                            float x0y1 = (*curr_intensity)(y1_warp+1, x1_warp+0);
+                            float x1y0 = (*curr_intensity)(y1_warp+0, x1_warp+1);
+                            float x1y1 = (*curr_intensity)(y1_warp+1, x1_warp+1);
+
+
+                            float prev_intensity_val = (*prev_intensity)(y0, x0);
+                            float prev_warped_intensity_val = (x0y0 * x0w + x1y0 * x1w) * y0w + (x0y1 * x0w + x1y1 * x1w) * y1w;
+                            //float prev_warped_intensity = x0y0;
+
+                            (*residuals)(y0, x0) = -prev_warped_intensity_val + prev_intensity_val;
+                        }
 
 
                     }
                 }
 
+                /*
 
-                return odometry;
+                for(int i = 0; i < transformed_curr_point_cloud.cols(); ++i){
+                    float d0_w = transformed_curr_point_cloud(2,i);
+                    float x0_w = fx*transformed_curr_point_cloud(0,i)*(1/d0_w) + cx;
+                    float y0_w = fy*transformed_curr_point_cloud(1,i)*(1/d0_w) + cy;
+
+                    int x0_wi = std::floor(x0_w);
+                    int y0_wi = std::floor(y0_w);
+
+                    int x1_i = i / rows;
+                    int y1_i = i % rows;
+
+                    if(x0_wi >= 0 && x0_wi < cols-1 && y0_wi >= 0 && y0_wi < rows-1){
+                        (*corresps)(y0_wi, x0_wi) = 1.0;
+                        float x1w = x0_w - x0_wi;
+                        float x0w = 1.0 - x1w;
+                        float y1w = y0_w - y0_wi;
+                        float y0w = 1.0 - y1w;
+
+                        float x0y0 = (*prev_intensity)(y0_wi+0, x0_wi+0);
+                        float x0y1 = (*prev_intensity)(y0_wi+1, x0_wi+0);
+                        float x1y0 = (*prev_intensity)(y0_wi+0, x0_wi+1);
+                        float x1y1 = (*prev_intensity)(y0_wi+1, x0_wi+1);
+                        
+
+                        float curr_intensity_val = (*curr_intensity)(y1_i, x1_i);
+                        float prev_warped_intensity_val = (x0y0 * x0w + x1y0 * x1w) * y0w + (x0y1 * x0w + x1y1 * x1w) * y1w;
+                        //float prev_warped_intensity = x0y0;
+
+                        (*residuals)(y0_wi, x0_wi) = prev_warped_intensity_val - curr_intensity_val;
+                    }
+                }
+                */
+                time.toc();
+
+                return residuals;
             }
 
             std::shared_ptr<Eigen::MatrixXf> get_half_image(const std::shared_ptr<Eigen::MatrixXf>& image){
