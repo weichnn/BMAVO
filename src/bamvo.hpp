@@ -248,7 +248,7 @@ namespace goodguy{
                 const float& cx = cparam.cx;
                 const float& cy = cparam.cy;
 
-                Eigen::MatrixXf transformed_curr_point_cloud = transform_point_cloud_sse(*prev->get_point_cloud(), transform);
+                //Eigen::MatrixXf transformed_curr_point_cloud = transform_point_cloud_sse(*prev->get_point_cloud(), transform);
                 time.toc();
                 time.tic();
 
@@ -265,47 +265,50 @@ namespace goodguy{
                 Eigen::Matrix3f KRK_inv = K*R*K.inverse();
                 Eigen::Vector3f Kt = K*transform.block<3,1>(0,3);
 
-                for(int x0 = 0; x0 < cols; ++x0){
-                    for(int y0 = 0; y0 < rows; ++y0){
-                        float d0 = (*prev_depth)(y0, x0);
+                auto lambda_for_residuals = [&](const tbb::blocked_range<int>& r){
+                    for(int x0 = r.begin(); x0 < r.end(); ++x0){
+                        for(int y0 = 0; y0 < rows; ++y0){
+                            float d0 = (*prev_depth)(y0, x0);
 
-                        if(d0 < m_param.range_odo.min && d0 > m_param.range_odo.max)    continue;
+                            if(d0 < m_param.range_odo.min && d0 > m_param.range_odo.max)    continue;
 
-                        float d1_warp = d0 *(KRK_inv(2,0)*x0+KRK_inv(2,1)*y0+KRK_inv(2,2)) + Kt(2);
-                        float x1_warp = (d0 *(KRK_inv(0,0)*x0+KRK_inv(0,1)*y0+KRK_inv(0,2)) + Kt(0))/d1_warp;
-                        float y1_warp = (d0 *(KRK_inv(1,0)*x0+KRK_inv(1,1)*y0+KRK_inv(1,2)) + Kt(1))/d1_warp;
+                            float d1_warp = d0 *(KRK_inv(2,0)*x0+KRK_inv(2,1)*y0+KRK_inv(2,2)) + Kt(2);
+                            float x1_warp = (d0 *(KRK_inv(0,0)*x0+KRK_inv(0,1)*y0+KRK_inv(0,2)) + Kt(0))/d1_warp;
+                            float y1_warp = (d0 *(KRK_inv(1,0)*x0+KRK_inv(1,1)*y0+KRK_inv(1,2)) + Kt(1))/d1_warp;
 
-                        int x1_warp_int = std::floor(x1_warp);
-                        int y1_warp_int = std::floor(y1_warp);
-
-
-                        if(x1_warp_int >= 0 && x1_warp_int < cols-1 && y1_warp_int >= 0 && y1_warp_int < rows-1){
-                            (*corresps)(y0, x0) = 1.0;
-
-                            float d1 = (*curr_depth)(y1_warp_int, x1_warp_int);
-                            if(d1 < m_param.range_odo.min && d1 > m_param.range_odo.max)    continue;
-
-                            float x1w = x1_warp - x1_warp_int;
-                            float x0w = 1.0 - x1w;
-                            float y1w = y1_warp - y1_warp_int;
-                            float y0w = 1.0 - y1w;
-
-                            float x0y0 = (*curr_intensity)(y1_warp+0, x1_warp+0);
-                            float x0y1 = (*curr_intensity)(y1_warp+1, x1_warp+0);
-                            float x1y0 = (*curr_intensity)(y1_warp+0, x1_warp+1);
-                            float x1y1 = (*curr_intensity)(y1_warp+1, x1_warp+1);
+                            int x1_warp_int = std::floor(x1_warp);
+                            int y1_warp_int = std::floor(y1_warp);
 
 
-                            float prev_intensity_val = (*prev_intensity)(y0, x0);
-                            float prev_warped_intensity_val = (x0y0 * x0w + x1y0 * x1w) * y0w + (x0y1 * x0w + x1y1 * x1w) * y1w;
-                            //float prev_warped_intensity = x0y0;
+                            if(x1_warp_int >= 0 && x1_warp_int < cols-1 && y1_warp_int >= 0 && y1_warp_int < rows-1){
+                                (*corresps)(y0, x0) = 1.0;
 
-                            (*residuals)(y0, x0) = -prev_warped_intensity_val + prev_intensity_val;
+                                float d1 = (*curr_depth)(y1_warp_int, x1_warp_int);
+                                if(d1 < m_param.range_odo.min && d1 > m_param.range_odo.max)    continue;
+
+                                float x1w = x1_warp - x1_warp_int;
+                                float x0w = 1.0 - x1w;
+                                float y1w = y1_warp - y1_warp_int;
+                                float y0w = 1.0 - y1w;
+
+                                float x0y0 = (*curr_intensity)(y1_warp+0, x1_warp+0);
+                                float x0y1 = (*curr_intensity)(y1_warp+1, x1_warp+0);
+                                float x1y0 = (*curr_intensity)(y1_warp+0, x1_warp+1);
+                                float x1y1 = (*curr_intensity)(y1_warp+1, x1_warp+1);
+
+
+                                float prev_intensity_val = (*prev_intensity)(y0, x0);
+                                float prev_warped_intensity_val = (x0y0 * x0w + x1y0 * x1w) * y0w + (x0y1 * x0w + x1y1 * x1w) * y1w;
+                                //float prev_warped_intensity = x0y0;
+
+                                (*residuals)(y0, x0) = -prev_warped_intensity_val + prev_intensity_val;
+                            }
+
+
                         }
-
-
                     }
-                }
+                };
+                tbb::parallel_for(tbb::blocked_range<int>(0,cols), lambda_for_residuals);
 
                 /*
 
