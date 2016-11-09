@@ -168,7 +168,7 @@ namespace goodguy{
                     const std::vector<int> iter_count)
 
             {
-                ComputationTime odom_time("odometry");
+                static ComputationTime odom_time("odometry");
                 odom_time.global_tic();
                 Eigen::Matrix4f odometry = Eigen::Matrix4f::Identity();
 
@@ -201,12 +201,12 @@ namespace goodguy{
                         residuals = compute_residuals(prev, curr, odometry, param, residuals, corresps);
 
 
-                        std::cout <<"LV: " << level << " " << iter <<std::endl;
+                        //std::cout <<"LV: " << level << " " << iter <<std::endl;
 
 
                         if(residuals != NULL){
-                            cv::Mat residuals_cv = eigen2cv(*residuals);
-                            cv::imshow(std::string("Residuals ")+boost::lexical_cast<std::string>(level), residuals_cv*10);
+                            //cv::Mat residuals_cv = eigen2cv(*residuals);
+                            //cv::imshow(std::string("Residuals ")+boost::lexical_cast<std::string>(level), residuals_cv*10);
                         }
                     }
 
@@ -217,6 +217,18 @@ namespace goodguy{
                 return odometry;
             }
 
+			inline __m128 _mm_floor_ps2(const __m128& x){
+				__m128i v0 = _mm_setzero_si128();
+				__m128i v1 = _mm_cmpeq_epi32(v0,v0);
+				__m128i ji = _mm_srli_epi32( v1, 25);
+				__m128 j = (__m128)_mm_slli_epi32( ji, 23);
+				__m128i i = _mm_cvttps_epi32(x);
+				__m128 fi = _mm_cvtepi32_ps(i);
+				__m128 igx = _mm_cmpgt_ps(fi, x);
+				j = _mm_and_ps(igx, j);
+				return _mm_sub_ps(fi, j);
+			}
+
             std::shared_ptr<Eigen::MatrixXf> compute_residuals(
                     const std::shared_ptr<goodguy::rgbd_image>& prev, 
                     const std::shared_ptr<goodguy::rgbd_image>& curr, 
@@ -225,11 +237,6 @@ namespace goodguy{
                     std::shared_ptr<Eigen::MatrixXf>& residuals,
                     std::shared_ptr<Eigen::MatrixXf>& corresps)
             {
-                ComputationTime time("residuals");
-
-                time.tic();
-
-
                 const int rows = prev->get_intensity()->rows();
                 const int cols = prev->get_intensity()->cols();
 
@@ -248,10 +255,6 @@ namespace goodguy{
                 const float& cx = cparam.cx;
                 const float& cy = cparam.cy;
 
-                //Eigen::MatrixXf transformed_curr_point_cloud = transform_point_cloud_sse(*prev->get_point_cloud(), transform);
-                time.toc();
-                time.tic();
-
                 const std::shared_ptr<Eigen::MatrixXf>& prev_intensity = prev->get_intensity();
                 const std::shared_ptr<Eigen::MatrixXf>& curr_intensity = curr->get_intensity();
 
@@ -265,9 +268,111 @@ namespace goodguy{
                 Eigen::Matrix3f KRK_inv = K*R*K.inverse();
                 Eigen::Vector3f Kt = K*transform.block<3,1>(0,3);
 
+                __m128* prev_depth_sse = (__m128*)prev_depth->data();
+                __m128* curr_depth_sse = (__m128*)curr_depth->data();
+                __m128* prev_intensity_sse = (__m128*)prev_intensity->data();
+                __m128* residuals_sse = (__m128*)residuals->data();
+                __m128* corresps_sse = (__m128*)corresps->data();
+
+                __m128 KRK_inv_0_0 = _mm_set_ps1(KRK_inv(0,0));
+                __m128 KRK_inv_0_1 = _mm_set_ps1(KRK_inv(0,1));
+                __m128 KRK_inv_0_2 = _mm_set_ps1(KRK_inv(0,2));
+                __m128 KRK_inv_1_0 = _mm_set_ps1(KRK_inv(1,0));
+                __m128 KRK_inv_1_1 = _mm_set_ps1(KRK_inv(1,1));
+                __m128 KRK_inv_1_2 = _mm_set_ps1(KRK_inv(1,2));
+                __m128 KRK_inv_2_0 = _mm_set_ps1(KRK_inv(2,0));
+                __m128 KRK_inv_2_1 = _mm_set_ps1(KRK_inv(2,1));
+                __m128 KRK_inv_2_2 = _mm_set_ps1(KRK_inv(2,2));
+                __m128 Kt_0 = _mm_set_ps1(Kt(0));
+                __m128 Kt_1 = _mm_set_ps1(Kt(1));
+                __m128 Kt_2 = _mm_set_ps1(Kt(2));
+
+                __m128 inc = _mm_set_ps(3,2,1,0);
+
+                __m128 x_min = _mm_set_ps1(0);
+                __m128 x_max = _mm_set_ps1(prev_depth->cols()-2);
+                __m128 y_min = _mm_set_ps1(0);
+                __m128 y_max = _mm_set_ps1(prev_depth->rows()-2);
+
+                __m128 ones = _mm_set_ps1(1);
+
+                __m128 depth_min = _mm_set_ps1(m_param.range_odo.min);
+                __m128 depth_max = _mm_set_ps1(m_param.range_odo.max);
+
+
                 auto lambda_for_residuals = [&](const tbb::blocked_range<int>& r){
                     for(int x0 = r.begin(); x0 < r.end(); ++x0){
-                        for(int y0 = 0; y0 < rows; ++y0){
+                        __m128 x0_sse = _mm_set_ps1(x0);
+
+                        for(int y0 = 0; y0 < rows/4; ++y0){
+
+                            __m128 y0_sse = _mm_set_ps1(y0*4);
+                            y0_sse = _mm_add_ps(y0_sse, inc);
+
+                            __m128 d0 = prev_depth_sse[x0*prev_depth->rows()/4+y0];
+
+                            __m128 d0_available = _mm_and_ps(_mm_cmpge_ps(d0, depth_min), _mm_cmpge_ps(depth_max, d0));
+
+
+                            __m128 d1_warp = _mm_add_ps(_mm_mul_ps(KRK_inv_2_0, x0_sse),  _mm_mul_ps(KRK_inv_2_1, y0_sse));
+                            d1_warp = _mm_add_ps(_mm_mul_ps(_mm_add_ps(d1_warp, KRK_inv_2_2), d0), Kt_2);
+
+                            __m128 d1_warp_rcp = _mm_rcp_ps(d1_warp);
+
+                            __m128 x1_warp = _mm_add_ps(_mm_mul_ps(KRK_inv_0_0, x0_sse),  _mm_mul_ps(KRK_inv_0_1, y0_sse));
+                            x1_warp = _mm_mul_ps(_mm_add_ps(_mm_mul_ps(_mm_add_ps(x1_warp, KRK_inv_0_2), d0), Kt_0), d1_warp_rcp);
+
+                            __m128 y1_warp = _mm_add_ps(_mm_mul_ps(KRK_inv_1_0, x0_sse),  _mm_mul_ps(KRK_inv_1_1, y0_sse));
+                            y1_warp = _mm_mul_ps(_mm_add_ps(_mm_mul_ps(_mm_add_ps(y1_warp, KRK_inv_1_2), d0), Kt_1), d1_warp_rcp);
+
+                            __m128 x1_warp_int = _mm_floor_ps2(x1_warp);
+                            __m128 y1_warp_int = _mm_floor_ps2(y1_warp);
+
+                            d0_available = _mm_and_ps(d0_available, _mm_cmpgt_ps(x1_warp_int, x_min));
+                            d0_available = _mm_and_ps(d0_available, _mm_cmpgt_ps(x_max, x1_warp_int));
+                            d0_available = _mm_and_ps(d0_available, _mm_cmpgt_ps(y1_warp_int, y_min));
+                            d0_available = _mm_and_ps(d0_available, _mm_cmpgt_ps(y_max, y1_warp_int));
+
+                            x1_warp_int = _mm_min_ps(x1_warp_int, x_max);
+                            x1_warp_int = _mm_max_ps(x1_warp_int, x_min);
+
+                            y1_warp_int = _mm_min_ps(y1_warp_int, y_max);
+                            y1_warp_int = _mm_max_ps(y1_warp_int, y_min);
+
+                            __m128 x1w = _mm_sub_ps(x1_warp, x1_warp_int);
+                            __m128 x0w = _mm_sub_ps(ones, x1w);
+                            __m128 y1w = _mm_sub_ps(y1_warp, y1_warp_int);
+                            __m128 y0w = _mm_sub_ps(ones, y1w);
+
+                            __m128 x0y0 = _mm_set_ps((*curr_intensity)(((float*)&y1_warp_int)[3]+0, ((float*)&x1_warp_int)[3]+0), 
+                                    (*curr_intensity)(((float*)&y1_warp_int)[2]+0, ((float*)&x1_warp_int)[2]+0), 
+                                    (*curr_intensity)(((float*)&y1_warp_int)[1]+0, ((float*)&x1_warp_int)[1]+0), 
+                                    (*curr_intensity)(((float*)&y1_warp_int)[0]+0, ((float*)&x1_warp_int)[0]+0));
+                            __m128 x0y1 = _mm_set_ps((*curr_intensity)(((float*)&y1_warp_int)[3]+1, ((float*)&x1_warp_int)[3]+0), 
+                                    (*curr_intensity)(((float*)&y1_warp_int)[1]+1, ((float*)&x1_warp_int)[2]+0), 
+                                    (*curr_intensity)(((float*)&y1_warp_int)[2]+1, ((float*)&x1_warp_int)[1]+0), 
+                                    (*curr_intensity)(((float*)&y1_warp_int)[3]+1, ((float*)&x1_warp_int)[0]+0));
+                            __m128 x1y0 = _mm_set_ps((*curr_intensity)(((float*)&y1_warp_int)[3]+0, ((float*)&x1_warp_int)[3]+1), 
+                                    (*curr_intensity)(((float*)&y1_warp_int)[1]+0, ((float*)&x1_warp_int)[2]+1), 
+                                    (*curr_intensity)(((float*)&y1_warp_int)[2]+0, ((float*)&x1_warp_int)[1]+1), 
+                                    (*curr_intensity)(((float*)&y1_warp_int)[3]+0, ((float*)&x1_warp_int)[0]+1));
+                            __m128 x1y1 = _mm_set_ps((*curr_intensity)(((float*)&y1_warp_int)[3]+1, ((float*)&x1_warp_int)[3]+1), 
+                                    (*curr_intensity)(((float*)&y1_warp_int)[2]+1, ((float*)&x1_warp_int)[2]+1), 
+                                    (*curr_intensity)(((float*)&y1_warp_int)[1]+1, ((float*)&x1_warp_int)[1]+1), 
+                                    (*curr_intensity)(((float*)&y1_warp_int)[0]+1, ((float*)&x1_warp_int)[0]+1));
+
+                            __m128 prev_warped_intensity_val_0 = _mm_mul_ps(_mm_add_ps(_mm_mul_ps(x0y0, x0w), _mm_mul_ps(x1y0, x1w)), y0w);
+                            __m128 prev_warped_intensity_val_1 = _mm_mul_ps(_mm_add_ps(_mm_mul_ps(x0y1, x0w), _mm_mul_ps(x1y1, x1w)), y1w);
+                            __m128 prev_warped_intensity_val = _mm_add_ps(prev_warped_intensity_val_0, prev_warped_intensity_val_1);
+
+                            __m128 prev_warped_intensity = prev_intensity_sse[x0*prev_depth->rows()/4+y0];
+
+
+                            __m128 residuals_val = _mm_sub_ps(prev_warped_intensity, prev_warped_intensity_val);
+
+                            residuals_sse[x0*prev_depth->rows()/4+y0] = _mm_and_ps(d0_available, residuals_val);
+
+                            /*
                             float d0 = (*prev_depth)(y0, x0);
 
                             if(d0 < m_param.range_odo.min && d0 > m_param.range_odo.max)    continue;
@@ -278,8 +383,6 @@ namespace goodguy{
 
                             int x1_warp_int = std::floor(x1_warp);
                             int y1_warp_int = std::floor(y1_warp);
-
-
                             if(x1_warp_int >= 0 && x1_warp_int < cols-1 && y1_warp_int >= 0 && y1_warp_int < rows-1){
                                 (*corresps)(y0, x0) = 1.0;
 
@@ -303,12 +406,15 @@ namespace goodguy{
 
                                 (*residuals)(y0, x0) = -prev_warped_intensity_val + prev_intensity_val;
                             }
+                            */
 
 
                         }
                     }
                 };
+                //lambda_for_residuals(tbb::blocked_range<int>(0,cols));
                 tbb::parallel_for(tbb::blocked_range<int>(0,cols), lambda_for_residuals);
+                //tbb::parallel_for(tbb::blocked_range<int>(0,cols), lambda_for_residuals);
 
                 /*
 
@@ -344,7 +450,6 @@ namespace goodguy{
                     }
                 }
                 */
-                time.toc();
 
                 return residuals;
             }
