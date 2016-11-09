@@ -109,8 +109,8 @@ namespace goodguy{
                     labeled_bgm.push_back(std::make_shared<Eigen::MatrixXf>(Eigen::MatrixXf(Eigen::MatrixXf::Ones(curr_depth->rows(), curr_depth->cols()))));
                 }
                 else{
-                    bgm.emplace_back(std::get<0>(bgm_set));
-                    labeled_bgm.emplace_back(std::get<1>(bgm_set));
+                    bgm.push_back(std::get<0>(bgm_set));
+                    labeled_bgm.push_back(std::get<1>(bgm_set));
                 }
 
 
@@ -164,8 +164,8 @@ namespace goodguy{
             Eigen::Matrix4f compute_odometry(
                     const std::vector<std::shared_ptr<goodguy::rgbd_image>>& prev_rgbd_pyramid, 
                     const std::vector<std::shared_ptr<goodguy::rgbd_image>>& curr_rgbd_pyramid, 
-                    const std::vector<std::shared_ptr<Eigen::MatrixXf>>& bgm, 
-                    const std::vector<std::shared_ptr<Eigen::MatrixXf>>& labeled_bgm, 
+                    const std::vector<std::shared_ptr<Eigen::MatrixXf>>& bgm_pyramid, 
+                    const std::vector<std::shared_ptr<Eigen::MatrixXf>>& labeled_bgm_pyramid, 
                     const std::vector<int> iter_count)
 
             {
@@ -174,9 +174,9 @@ namespace goodguy{
                 Eigen::Matrix4f odometry = Eigen::Matrix4f::Identity();
 
                 if(prev_rgbd_pyramid.size() != curr_rgbd_pyramid.size() 
-                        && prev_rgbd_pyramid.size() != bgm.size() 
-                        && bgm.size() != labeled_bgm.size()
-                        && bgm.size() != iter_count.size())
+                        && prev_rgbd_pyramid.size() != bgm_pyramid.size() 
+                        && bgm_pyramid.size() != labeled_bgm_pyramid.size()
+                        && bgm_pyramid.size() != iter_count.size())
                 {
                     std::cerr << "Not equal level size" << std::endl;
                     return odometry;
@@ -196,13 +196,13 @@ namespace goodguy{
 
                     const std::shared_ptr<goodguy::rgbd_image>& prev = prev_rgbd_pyramid[level];
                     const std::shared_ptr<goodguy::rgbd_image>& curr = curr_rgbd_pyramid[level];
-                    const std::shared_ptr<Eigen::MatrixXf>& bgm_level = bgm[level];
-                    const std::shared_ptr<Eigen::MatrixXf>& labeled_bgm_level = labeled_bgm[level];
+                    const std::shared_ptr<Eigen::MatrixXf>& bgm = bgm_pyramid[level];
+                    const std::shared_ptr<Eigen::MatrixXf>& labeled_bgm = labeled_bgm_pyramid[level];
                     
                     for(int iter = 0; iter < iter_count[level]; ++iter){
 
                         compute_residuals(prev, curr, odometry, param, residuals, corresps);
-                        Eigen::VectorXf ksi = compute_ksi(prev, curr, bgm_level, labeled_bgm_level, residuals, corresps, odometry, param); 
+                        Eigen::VectorXf ksi = compute_ksi(prev, curr, bgm, labeled_bgm, residuals, corresps, odometry, param); 
 
 
                         //std::cout <<"LV: " << level << " " << iter <<std::endl;
@@ -233,6 +233,40 @@ namespace goodguy{
                     const goodguy::camera_parameter& cparam) 
             {
                 Eigen::VectorXf ksi = Eigen::VectorXf::Zero(6,1);
+
+                int corresps_num = 0;
+                for(int j = 0; j < corresps->cols(); ++j){
+                    for(int i = 0; i < corresps->rows(); ++i){
+                        if((*corresps)(i,j) == 1.0){
+                            corresps_num++;
+                        }
+                    }
+                }
+
+                //std::cout << corresps_num << std::endl;
+
+                Eigen::MatrixXf C(corresps_num, 6);
+                Eigen::MatrixXf W(corresps_num, 1);
+                Eigen::MatrixXf W_s(corresps_num, 1);
+                Eigen::MatrixXf W_b(corresps_num, 1);
+                Eigen::MatrixXf dI_dx1(corresps_num, 1);
+                Eigen::MatrixXf dI_dy1(corresps_num, 1);
+                Eigen::MatrixXf points0(corresps_num, 4);
+
+                int count = 0;
+                for(int j = 0; j < corresps->cols(); ++j){
+                    for(int i = 0; i < corresps->rows(); ++i){
+                        if((*corresps)(i,j) == 1.0){
+                            W_b(count,0) = (*bgm)(i,j);
+                            dI_dx1(count,0) = (*(curr->get_x_derivative()))(i,j);
+                            dI_dy1(count,0) = (*(curr->get_y_derivative()))(i,j);
+                            //points0.row(count) = prev->get_point_cloud()->col(i*corresps->cols()+j).transpose();
+
+                            count++;
+
+                        }
+                    }
+                }
 
 
                 return ksi;
@@ -268,8 +302,8 @@ namespace goodguy{
                     corresps = std::make_shared<Eigen::MatrixXf>(Eigen::MatrixXf(rows, cols));
                 }
 
-                corresps->setZero();
-                residuals->setZero();
+                //corresps->setZero();
+                //residuals->setZero();
 
                 const float& fx = cparam.fx;
                 const float& fy = cparam.fy;
@@ -364,6 +398,15 @@ namespace goodguy{
                             __m128 x0w = _mm_sub_ps(ones, x1w);
                             __m128 y1w = _mm_sub_ps(y1_warp, y1_warp_int);
                             __m128 y0w = _mm_sub_ps(ones, y1w);
+
+
+                            __m128 d1 = _mm_set_ps((*curr_depth)(((float*)&y1_warp_int)[3]+0, ((float*)&x1_warp_int)[3]+0), 
+                                    (*curr_depth)(((float*)&y1_warp_int)[2]+0, ((float*)&x1_warp_int)[2]+0), 
+                                    (*curr_depth)(((float*)&y1_warp_int)[1]+0, ((float*)&x1_warp_int)[1]+0), 
+                                    (*curr_depth)(((float*)&y1_warp_int)[0]+0, ((float*)&x1_warp_int)[0]+0));
+
+                            __m128 d1_available = _mm_and_ps(_mm_cmpge_ps(d1, depth_min), _mm_cmpge_ps(depth_max, d1));
+                            d0_available = _mm_and_ps(d0_available, d1_available);
 
                             __m128 x0y0 = _mm_set_ps((*curr_intensity)(((float*)&y1_warp_int)[3]+0, ((float*)&x1_warp_int)[3]+0), 
                                     (*curr_intensity)(((float*)&y1_warp_int)[2]+0, ((float*)&x1_warp_int)[2]+0), 
