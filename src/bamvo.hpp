@@ -160,6 +160,7 @@ namespace goodguy{
 
         private:
 
+
             Eigen::Matrix4f compute_odometry(
                     const std::vector<std::shared_ptr<goodguy::rgbd_image>>& prev_rgbd_pyramid, 
                     const std::vector<std::shared_ptr<goodguy::rgbd_image>>& curr_rgbd_pyramid, 
@@ -195,17 +196,20 @@ namespace goodguy{
 
                     const std::shared_ptr<goodguy::rgbd_image>& prev = prev_rgbd_pyramid[level];
                     const std::shared_ptr<goodguy::rgbd_image>& curr = curr_rgbd_pyramid[level];
+                    const std::shared_ptr<Eigen::MatrixXf>& bgm_level = bgm[level];
+                    const std::shared_ptr<Eigen::MatrixXf>& labeled_bgm_level = labeled_bgm[level];
                     
                     for(int iter = 0; iter < iter_count[level]; ++iter){
 
-                        residuals = compute_residuals(prev, curr, odometry, param, residuals, corresps);
+                        compute_residuals(prev, curr, odometry, param, residuals, corresps);
+                        Eigen::VectorXf ksi = compute_ksi(prev, curr, bgm_level, labeled_bgm_level, residuals, corresps, odometry, param); 
 
 
                         //std::cout <<"LV: " << level << " " << iter <<std::endl;
 
 
                         if(residuals != NULL){
-                            //cv::Mat residuals_cv = eigen2cv(*residuals);
+                            //cv::Mat residuals_cv = eigen2cv(*corresps);
                             //cv::imshow(std::string("Residuals ")+boost::lexical_cast<std::string>(level), residuals_cv*10);
                         }
                     }
@@ -215,6 +219,23 @@ namespace goodguy{
 
                 odom_time.global_toc();
                 return odometry;
+            }
+
+
+            Eigen::VectorXf compute_ksi(
+                    const std::shared_ptr<goodguy::rgbd_image>& prev, 
+                    const std::shared_ptr<goodguy::rgbd_image>& curr, 
+                    const std::shared_ptr<Eigen::MatrixXf>& bgm,
+                    const std::shared_ptr<Eigen::MatrixXf>& labeled_bgm,
+                    const std::shared_ptr<Eigen::MatrixXf>& residuals,
+                    const std::shared_ptr<Eigen::MatrixXf>& corresps,
+                    const Eigen::Matrix4f& transform,
+                    const goodguy::camera_parameter& cparam) 
+            {
+                Eigen::VectorXf ksi = Eigen::VectorXf::Zero(6,1);
+
+
+                return ksi;
             }
 
 			inline __m128 _mm_floor_ps2(const __m128& x){
@@ -229,7 +250,7 @@ namespace goodguy{
 				return _mm_sub_ps(fi, j);
 			}
 
-            std::shared_ptr<Eigen::MatrixXf> compute_residuals(
+            void compute_residuals(
                     const std::shared_ptr<goodguy::rgbd_image>& prev, 
                     const std::shared_ptr<goodguy::rgbd_image>& curr, 
                     const Eigen::Matrix4f& transform,
@@ -371,6 +392,7 @@ namespace goodguy{
                             __m128 residuals_val = _mm_sub_ps(prev_warped_intensity, prev_warped_intensity_val);
 
                             residuals_sse[x0*prev_depth->rows()/4+y0] = _mm_and_ps(d0_available, residuals_val);
+                            corresps_sse[x0*prev_depth->rows()/4+y0] = _mm_and_ps(d0_available, ones);
 
                             /*
                             float d0 = (*prev_depth)(y0, x0);
@@ -451,7 +473,6 @@ namespace goodguy{
                 }
                 */
 
-                return residuals;
             }
 
             std::shared_ptr<Eigen::MatrixXf> get_half_image(const std::shared_ptr<Eigen::MatrixXf>& image){
