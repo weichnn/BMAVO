@@ -20,10 +20,10 @@ namespace goodguy{
             set_default();
         }
         void set_default(){
-            camera_params.fx = 549.094829;
-            camera_params.fy = 545.329258;
-            camera_params.cx = 292.782603;
-            camera_params.cy = 226.667207;
+            camera_params.fx = 549.094829/2.0;
+            camera_params.fy = 545.329258/2.0;
+            camera_params.cx = 292.782603/2.0;
+            camera_params.cy = 226.667207/2.0;
 
             hist_size = 4;
             sig_min = 0.000001;
@@ -33,12 +33,12 @@ namespace goodguy{
             iter_count.clear();
             iter_count.push_back(10);
             iter_count.push_back(10);
-            iter_count.push_back(10);
+            //iter_count.push_back(10);
 
             grad_mag_min.clear();
             grad_mag_min.push_back(12);
             grad_mag_min.push_back(5);
-            grad_mag_min.push_back(3);
+            //grad_mag_min.push_back(3);
 
             range_bgm.min = 0.5;
             range_bgm.max = 4.0;

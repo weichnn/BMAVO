@@ -54,6 +54,10 @@ void callback(
 
     vo->add(rgb_resize, depth_resize);
 
+    Eigen::Matrix4f curr_pose = vo->get_current_pose();
+
+    //std::cout <<  "\t\t\t\t\t\t\t\t\t"<< curr_pose.block<3,1>(0,3).transpose() << std::endl;
+
     cv::imshow("Received RGB image", rgb_in);
     cv::imshow("Received Depth image", depth_meter);
 

@@ -27,7 +27,7 @@
 namespace goodguy{
     class bamvo{
         public:
-            bamvo() : m_time("BAMVO") { }
+            bamvo() : m_time("BAMVO"), m_global_pose(Eigen::Matrix4f::Identity()) { }
 
             void add(const cv::Mat& color, const cv::Mat& depth){
                 m_time.global_tic();
@@ -123,7 +123,7 @@ namespace goodguy{
 
 
                 // Show pyramid for RGB-D
-                if(false)
+                if(true)
                     for(std::size_t i = 0; i < m_param.iter_count.size(); ++i){
                         cv::Mat rgb = eigen2cv(*m_curr_rgbd_pyramid[i]->get_intensity());
                         cv::Mat depth = eigen2cv(*m_curr_rgbd_pyramid[i]->get_depth());
@@ -147,8 +147,12 @@ namespace goodguy{
                     // Compute Odometry
                     Eigen::Matrix4f curr_pose = compute_odometry(m_prev_rgbd_pyramid, m_curr_rgbd_pyramid, bgm, labeled_bgm, m_param.iter_count);
 
+                    m_global_pose = curr_pose.inverse() * m_global_pose;
+
+                    std::cout << "\t\t\t\t\t\t\t\t" << m_global_pose.block<3,1>(0,3).transpose() << std::endl;;
+
                     // Current pose between current image and previous in the previous view point(t->t-1)
-                    //*(m_hist_poses.back()) = curr_pose;
+                    *(m_hist_poses.back()) = curr_pose;
 
                 }
 
@@ -156,6 +160,8 @@ namespace goodguy{
 
                 m_time.global_toc();
             }
+
+            Eigen::Matrix4f get_current_pose() const { return m_global_pose; }
 
             void set_param(const bamvo_parameter& param){ m_param = param; }
             bamvo_parameter& get_param(){ return m_param; }
@@ -171,8 +177,6 @@ namespace goodguy{
                     const std::vector<int> iter_count)
 
             {
-                static ComputationTime odom_time("odometry");
-                odom_time.global_tic();
                 Eigen::Matrix4f odometry = Eigen::Matrix4f::Identity();
 
                 if(prev_rgbd_pyramid.size() != curr_rgbd_pyramid.size() 
@@ -208,7 +212,6 @@ namespace goodguy{
                         Eigen::VectorXf ksi = compute_ksi(bgm, labeled_bgm, residuals, corresps, A); 
 
                         Eigen::Matrix4f twist;
-                        
                         twist <<
                             0.,      -ksi(2), ksi(1),  ksi(3),
                             ksi(2),  0.,      -ksi(0), ksi(4),
@@ -216,31 +219,10 @@ namespace goodguy{
                             0.,      0.,      0.,      0.;
                         Eigen::Matrix4f odom_slice = twist.exp();
 
-
                         odometry = odometry * odom_slice;
-
-
-
-                        //std::cout <<"LV: " << level << " " << iter <<std::endl;
-
-
-                        if(residuals != NULL){
-                            //cv::Mat residuals_cv = eigen2cv(*corresps);
-                            //cv::imshow(std::string("Residuals ")+boost::lexical_cast<std::string>(level), residuals_cv*10);
-                        }
                     }
-
                 }
 
-                static Eigen::Matrix4f g_odom = Eigen::Matrix4f::Identity();
-
-                g_odom = g_odom * odometry.inverse();
-
-                //std::cout << "\t\t\t\t\t\t\t" << g_odom << std::endl;
-                std::cout << "\t\t\t\t\t\t\t" << g_odom.block<3,1>(0,3).transpose() << std::endl;
-
-
-                odom_time.global_toc();
                 return odometry;
             }
 
@@ -465,6 +447,7 @@ namespace goodguy{
                             __m128 prev_warped_intensity_val_0 = _mm_mul_ps(_mm_add_ps(_mm_mul_ps(x0y0, x0w), _mm_mul_ps(x1y0, x1w)), y0w);
                             __m128 prev_warped_intensity_val_1 = _mm_mul_ps(_mm_add_ps(_mm_mul_ps(x0y1, x0w), _mm_mul_ps(x1y1, x1w)), y1w);
                             __m128 prev_warped_intensity_val = _mm_add_ps(prev_warped_intensity_val_0, prev_warped_intensity_val_1);
+                            //__m128 prev_warped_intensity_val = x0y0;
 
                             __m128 prev_intensity_val = prev_intensity_sse[x0*prev_depth->rows()/4+y0];
 
@@ -473,8 +456,6 @@ namespace goodguy{
 
                             residuals_sse[x0*prev_depth->rows()/4+y0] = _mm_and_ps(d0_available, residuals_val);
                             corresps_sse[x0*prev_depth->rows()/4+y0] = _mm_and_ps(d0_available, ones);
-
-                            
 
                             //__m128 dIdx = prev_x_derivative_sse[x0*prev_depth->rows()/4+y0];
                             //__m128 dIdy = prev_y_derivative_sse[x0*prev_depth->rows()/4+y0];
@@ -602,6 +583,7 @@ namespace goodguy{
                             __m128 val2 = _mm_sub_ps(_mm_sub_ps(_mm_sub_ps(_mm_sub_ps(val, ul), dl), cl), cl);
                             __m128 val3 = _mm_mul_ps(val2, _mm_set1_ps(0.125));
                             //__m128 val = _mm_sub_ps(cr, cl);
+                            //__m128 val3 = _mm_mul_ps(val, _mm_set1_ps(0.5));
 
 
                             _mm_store_ps(derivative_x->data()+j*(int)intensity->rows()+4*i, val3);
@@ -678,6 +660,8 @@ namespace goodguy{
                             __m128 val =  _mm_add_ps(_mm_add_ps(_mm_add_ps(dr, dl), dc), dc);
                             __m128 val2 = _mm_sub_ps(_mm_sub_ps(_mm_sub_ps(_mm_sub_ps(val, ul), ur), uc), uc);
                             __m128 val3 = _mm_mul_ps(val2, _mm_set1_ps(0.125));
+                            //__m128 val = _mm_sub_ps(dc, uc);
+                            //__m128 val3 = _mm_mul_ps(val, _mm_set1_ps(0.5));
 
                             _mm_store_ps(derivative_y->data()+j*(int)intensity->rows()+4*i, val3);
 
@@ -758,7 +742,7 @@ namespace goodguy{
                 auto it_for_poses = poses.rbegin();
                 auto it_for_poses_acc = poses_accumulate.rbegin();
                 for(std::size_t i = 0; i < point_clouds.size(); ++i){
-                    warp_pose = (**it_for_poses++)*warp_pose;
+                    warp_pose = warp_pose*(**it_for_poses++);
                     *it_for_poses_acc++ = warp_pose;
                 }
 
@@ -1119,6 +1103,8 @@ namespace goodguy{
             bamvo_parameter m_param;
 
             ComputationTime m_time;
+
+            Eigen::Matrix4f m_global_pose;
 
 
     };
