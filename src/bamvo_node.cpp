@@ -46,8 +46,8 @@ void callback(
 
     cv::Mat rgb_resize, depth_resize;
 
-    cv::Size compute_size(640,480);
-    //cv::Size compute_size(320,240);
+    //cv::Size compute_size(640,480);
+    cv::Size compute_size(320,240);
 
     cv::resize(rgb_in, rgb_resize, compute_size);
     cv::resize(depth_meter, depth_resize, compute_size);
