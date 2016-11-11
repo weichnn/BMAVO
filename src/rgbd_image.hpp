@@ -11,11 +11,10 @@ namespace goodguy{
             rgbd_image(
                     std::shared_ptr<Eigen::MatrixXf>& intensity, 
                     std::shared_ptr<Eigen::MatrixXf>& depth, 
-                    std::shared_ptr<Eigen::MatrixXf>& point_cloud, 
                     std::shared_ptr<Eigen::MatrixXf>& x_derivative, 
                     std::shared_ptr<Eigen::MatrixXf>& y_derivative,
                     camera_parameter& param)
-                :m_intensity(intensity), m_depth(depth), m_point_cloud(point_cloud), m_x_derivative(x_derivative), m_y_derivative(y_derivative), m_param(param)
+                :m_intensity(intensity), m_depth(depth), m_x_derivative(x_derivative), m_y_derivative(y_derivative), m_param(param)
             {
 
 
@@ -30,7 +29,6 @@ namespace goodguy{
 
             void set(std::shared_ptr<Eigen::MatrixXf>& intensity, 
                     std::shared_ptr<Eigen::MatrixXf>& depth, 
-                    std::shared_ptr<Eigen::MatrixXf>& point_cloud,
                     std::shared_ptr<Eigen::MatrixXf>& x_derivative, 
                     std::shared_ptr<Eigen::MatrixXf>& y_derivative,
                     camera_parameter& param)
@@ -38,7 +36,6 @@ namespace goodguy{
             {
                 m_intensity = intensity;
                 m_depth = depth;
-                m_point_cloud = point_cloud;
                 m_x_derivative = x_derivative;
                 m_y_derivative = y_derivative;
                 m_param = param;
@@ -49,9 +46,6 @@ namespace goodguy{
             }
             void set_depth(std::shared_ptr<Eigen::MatrixXf>& depth){
                 m_depth = depth;
-            }
-            void set_point_cloud(std::shared_ptr<Eigen::MatrixXf>& point_cloud){
-                m_point_cloud = point_cloud;
             }
             void set_x_derivative(std::shared_ptr<Eigen::MatrixXf>& x_derivative){
                 m_x_derivative = x_derivative;
@@ -66,7 +60,6 @@ namespace goodguy{
 
             std::shared_ptr<Eigen::MatrixXf>& get_intensity() { return m_intensity; }
             std::shared_ptr<Eigen::MatrixXf>& get_depth() { return m_depth; }
-            std::shared_ptr<Eigen::MatrixXf>& get_point_cloud() { return m_point_cloud; }
             std::shared_ptr<Eigen::MatrixXf>& get_x_derivative() { return m_x_derivative; }
             std::shared_ptr<Eigen::MatrixXf>& get_y_derivative() { return m_y_derivative; }
             camera_parameter& get_param() { return m_param; }
@@ -75,7 +68,6 @@ namespace goodguy{
 
             std::shared_ptr<Eigen::MatrixXf> m_intensity;
             std::shared_ptr<Eigen::MatrixXf> m_depth;
-            std::shared_ptr<Eigen::MatrixXf> m_point_cloud;
             std::shared_ptr<Eigen::MatrixXf> m_x_derivative;
             std::shared_ptr<Eigen::MatrixXf> m_y_derivative;
             camera_parameter m_param;

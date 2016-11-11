@@ -28,17 +28,17 @@ namespace goodguy{
             hist_size = 4;
             sig_min = 0.000001;
 
-            bgm_level = 0.0; // Same as level for image pyramid
+            bgm_level = 1.0; // Same as level for image pyramid
 
             iter_count.clear();
             iter_count.push_back(10);
             iter_count.push_back(10);
-            //iter_count.push_back(10);
+            iter_count.push_back(10);
 
             grad_mag_min.clear();
             grad_mag_min.push_back(12);
             grad_mag_min.push_back(5);
-            //grad_mag_min.push_back(3);
+            grad_mag_min.push_back(3);
 
             range_bgm.min = 0.5;
             range_bgm.max = 4.0;
