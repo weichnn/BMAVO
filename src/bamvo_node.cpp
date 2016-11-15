@@ -24,8 +24,8 @@
 
 #include "bamvo.hpp"
 
-//cv::Size compute_size(640,480);
-cv::Size compute_size(320,240);
+cv::Size compute_size(640,480);
+//cv::Size compute_size(320,240);
 
 ros::Publisher pub_next_frame;
 ros::Publisher pub_odom;

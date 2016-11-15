@@ -31,7 +31,8 @@ namespace goodguy{
             bgm_level = 1.0; // Same as level for image pyramid
 
             iter_count.clear();
-            //iter_count.push_back(5);
+            iter_count.push_back(5);
+            iter_count.push_back(20);
             iter_count.push_back(20);
             iter_count.push_back(20);
 
