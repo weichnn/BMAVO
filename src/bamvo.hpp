@@ -358,9 +358,7 @@ namespace goodguy{
                 lambda_for_weight(tbb::blocked_range<int>(0,cols));
                 // Update sigma
                 mu = mu_temp/corresps_num;
-
                 sigma = std::sqrt(sigma_temp/corresps_num);
-                //tbb::parallel_for(tbb::blocked_range<int>(0,cols), lambda_for_weight);
             }
 
 
