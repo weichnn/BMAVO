@@ -5,6 +5,7 @@
 
 #include <xmmintrin.h>
 
+#include <iostream>
 #include <vector>
 #include <list>
 #include <deque>
@@ -61,15 +62,8 @@ namespace goodguy{
 
                 m_time.tic();
 
-                //cv::Mat curr_derivative_x_cv = eigen2cv(*curr_derivative_x);
-                //cv::Mat curr_derivative_y_cv = eigen2cv(*curr_derivative_y);
-                //cv::imshow("Derivative_x", curr_derivative_x_cv);
-                //cv::imshow("Derivative_y", curr_derivative_y_cv);
-
                 m_curr_rgbd_pyramid.emplace_back(std::make_shared<goodguy::rgbd_image>(
                             goodguy::rgbd_image(curr_intensity_eig, curr_depth_eig, curr_derivative_x, curr_derivative_y, m_param.camera_params)));
-
-
 
                 
                 for(std::size_t i = 1; i < m_param.iter_count.size(); ++i){
@@ -81,8 +75,8 @@ namespace goodguy{
 
                     std::shared_ptr<Eigen::MatrixXf> half_intensity = get_half_image(m_curr_rgbd_pyramid[i-1]->get_intensity());
                     std::shared_ptr<Eigen::MatrixXf> half_depth = get_half_image(m_curr_rgbd_pyramid[i-1]->get_depth());
-                    std::shared_ptr<Eigen::MatrixXf> half_derivative_x = get_half_image(m_curr_rgbd_pyramid[i-1]->get_x_derivative());
-                    std::shared_ptr<Eigen::MatrixXf> half_derivative_y = get_half_image(m_curr_rgbd_pyramid[i-1]->get_y_derivative());
+                    std::shared_ptr<Eigen::MatrixXf> half_derivative_x = calculate_derivative_x(half_intensity);
+                    std::shared_ptr<Eigen::MatrixXf> half_derivative_y = calculate_derivative_y(half_intensity);
                     m_curr_rgbd_pyramid.emplace_back(std::make_shared<goodguy::rgbd_image>(
                                 goodguy::rgbd_image(half_intensity, half_depth, half_derivative_x, half_derivative_y, half_param)));
 
@@ -107,8 +101,14 @@ namespace goodguy{
                     labeled_bgm.push_back(std::make_shared<Eigen::MatrixXf>(Eigen::MatrixXf(Eigen::MatrixXf::Ones(curr_depth->rows(), curr_depth->cols()))));
                 }
                 else{
-                    bgm.push_back(std::get<0>(bgm_set));
-                    labeled_bgm.push_back(std::get<1>(bgm_set));
+                    std::shared_ptr<Eigen::MatrixXf> bgm_level_0 = std::get<0>(bgm_set);
+                    std::shared_ptr<Eigen::MatrixXf> labeled_bgm_level_0 = std::get<1>(bgm_set);
+                    for(std::size_t j = 0; j < m_param.bgm_level; ++j){
+                        bgm_level_0 = get_double_image(bgm_level_0);
+                        labeled_bgm_level_0 = get_double_image(labeled_bgm_level_0);
+                    }
+                    bgm.push_back(bgm_level_0);
+                    labeled_bgm.push_back(labeled_bgm_level_0);
                 }
 
 
@@ -121,24 +121,20 @@ namespace goodguy{
                 // Show pyramid for RGB-D
                 if(false)
                     for(std::size_t i = 0; i < m_param.iter_count.size(); ++i){
-                        cv::Mat rgb = eigen2cv(*m_curr_rgbd_pyramid[i]->get_intensity());
-                        cv::Mat depth = eigen2cv(*m_curr_rgbd_pyramid[i]->get_depth());
-                        cv::Mat deri_x = eigen2cv(*m_curr_rgbd_pyramid[i]->get_x_derivative());
-                        cv::Mat deri_y = eigen2cv(*m_curr_rgbd_pyramid[i]->get_y_derivative());
-                        cv::Mat bgm_cv = eigen2cv(*bgm[i]);
-                        cv::imshow(std::string("Intensity ")+boost::lexical_cast<std::string>(i), rgb);
-                        cv::imshow(std::string("Depth ")+boost::lexical_cast<std::string>(i), depth);
-                        cv::imshow(std::string("Derivative X ")+boost::lexical_cast<std::string>(i), deri_x);
-                        cv::imshow(std::string("Derivative Y ")+boost::lexical_cast<std::string>(i), deri_y);
-                        cv::imshow(std::string("BGM ")+boost::lexical_cast<std::string>(i), bgm_cv/20.0);
-                    }
-                if(true)
-                    for(std::size_t i = 0; i < m_param.iter_count.size(); ++i){
                         cv::Mat bgm_cv = eigen2cv(*bgm[i]);
                         cv::Mat labeled_bgm_cv = eigen2cv(*labeled_bgm[i]);
                         cv::imshow(std::string("BGM ")+boost::lexical_cast<std::string>(i), bgm_cv/20.0);
-                        cv::imshow(std::string("LABELED BGM ")+boost::lexical_cast<std::string>(i), labeled_bgm_cv/20.0);
+                        cv::imshow(std::string("LABELED BGM ")+boost::lexical_cast<std::string>(i), labeled_bgm_cv);
                     }
+                else{
+                    if(bgm.size() > 0){
+                        cv::Mat bgm_cv = eigen2cv(*bgm[0]);
+                        cv::Mat labeled_bgm_cv = eigen2cv(*labeled_bgm[0]);
+                        cv::imshow(std::string("BGM ")+boost::lexical_cast<std::string>(0), bgm_cv/20.0);
+                        cv::imshow(std::string("LABELED BGM ")+boost::lexical_cast<std::string>(0), labeled_bgm_cv);
+                    }
+                }
+
 
 
                 m_time.toc();
@@ -148,14 +144,34 @@ namespace goodguy{
 
                 if(m_prev_rgbd_pyramid.size() != 0){
                     // Compute Odometry
-                    Eigen::Matrix4f curr_pose = compute_odometry(m_prev_rgbd_pyramid, m_curr_rgbd_pyramid, bgm, labeled_bgm, m_param.iter_count, m_param.grad_mag_min);
+                    Eigen::Matrix4f curr_pose = compute_odometry(m_prev_rgbd_pyramid, m_curr_rgbd_pyramid, bgm, labeled_bgm, m_param.iter_count);
+
+                    Eigen::Matrix4f log_curr_pose = curr_pose.log();
+                    Eigen::VectorXf vel_curr_pose(6);
+                    vel_curr_pose(0) = -log_curr_pose(0,1);
+                    vel_curr_pose(1) = log_curr_pose(0,2);
+                    vel_curr_pose(2) = -log_curr_pose(1,2);
+                    vel_curr_pose(3) = log_curr_pose(0,3);
+                    vel_curr_pose(4) = log_curr_pose(1,3);
+                    vel_curr_pose(5) = log_curr_pose(2,3);
+                    if(vel_curr_pose.norm() > 0.5){
+                        std::cout << "============================= Odometry calculation is failed!! =========" << std::endl;
+                        curr_pose = Eigen::Matrix4f::Identity();
+                        m_hist_poses.clear();
+                        m_hist_depth.clear();
+                    }
+                    else{
+                        // Current pose between current image and previous in the previous view point(t->t-1)
+                        *(m_hist_poses.back()) = curr_pose;
+                    }
+
+
+
 
                     m_global_pose =  curr_pose * m_global_pose;
 
-                    std::cout << "\t\t\t\t\t\t\t\t" << m_global_pose.inverse().block<3,1>(0,3).transpose() << std::endl;;
+                    std::cout << "\t\t\t\t\t\t\t\t" << m_global_pose.inverse() << std::endl;;
 
-                    // Current pose between current image and previous in the previous view point(t->t-1)
-                    *(m_hist_poses.back()) = curr_pose;
 
                 }
 
@@ -177,8 +193,7 @@ namespace goodguy{
                     const std::vector<std::shared_ptr<goodguy::rgbd_image>>& curr_rgbd_pyramid, 
                     const std::vector<std::shared_ptr<Eigen::MatrixXf>>& bgm_pyramid, 
                     const std::vector<std::shared_ptr<Eigen::MatrixXf>>& labeled_bgm_pyramid, 
-                    const std::vector<int>& iter_count, 
-                    const std::vector<float>& grad_mag_min)
+                    const std::vector<int>& iter_count)
 
             {
                 Eigen::Matrix4f odometry = Eigen::Matrix4f::Identity();
@@ -186,19 +201,18 @@ namespace goodguy{
                 if(prev_rgbd_pyramid.size() != curr_rgbd_pyramid.size() 
                         && prev_rgbd_pyramid.size() != bgm_pyramid.size() 
                         && bgm_pyramid.size() != labeled_bgm_pyramid.size()
-                        && bgm_pyramid.size() != iter_count.size()
-                        && bgm_pyramid.size() != grad_mag_min.size())
+                        && bgm_pyramid.size() != iter_count.size())
                 {
                     std::cerr << "Not equal level size" << std::endl;
                     return odometry;
                 }
 
                 int max_level = prev_rgbd_pyramid.size()-1;
-
+                float sigma = std::numeric_limits<float>::max();
+                float mu = 0.0;
 
                 for(int level = max_level; level >= 0; --level){
                     const goodguy::camera_parameter& param = curr_rgbd_pyramid[level]->get_param();
-                    const float grad_min = grad_mag_min[level]/255.0;
 
                     const int rows = curr_rgbd_pyramid[level]->get_intensity()->rows();
                     const int cols = curr_rgbd_pyramid[level]->get_intensity()->cols();
@@ -211,11 +225,18 @@ namespace goodguy{
                     const std::shared_ptr<goodguy::rgbd_image>& curr = curr_rgbd_pyramid[level];
                     const std::shared_ptr<Eigen::MatrixXf>& bgm = bgm_pyramid[level];
                     const std::shared_ptr<Eigen::MatrixXf>& labeled_bgm = labeled_bgm_pyramid[level];
+
+                    std::shared_ptr<Eigen::MatrixXf> weight;
+
+
                     
                     for(int iter = 0; iter < iter_count[level]; ++iter){
 
-                        compute_residuals_with_A(prev, curr, odometry, param, grad_min, residuals, corresps, A);
-                        Eigen::VectorXf ksi = compute_ksi(bgm, labeled_bgm, residuals, corresps, A); 
+                        compute_residuals_with_A(prev, curr, odometry, param, residuals, corresps, A);
+                        compute_weight(prev, residuals, corresps, bgm, labeled_bgm, mu, sigma, weight);
+
+
+                        Eigen::VectorXf ksi = compute_ksi(weight, residuals, corresps, A); 
 
                         Eigen::Matrix4f twist;
                         twist <<
@@ -232,12 +253,121 @@ namespace goodguy{
                 return odometry;
             }
 
+            void compute_weight(
+                    const std::shared_ptr<goodguy::rgbd_image>& prev, 
+                    const std::shared_ptr<Eigen::MatrixXf>& residuals,
+                    const std::shared_ptr<Eigen::MatrixXf>& corresps,
+                    const std::shared_ptr<Eigen::MatrixXf>& bgm,
+                    const std::shared_ptr<Eigen::MatrixXf>& labeled_bgm,
+                    float& mu,
+                    float& sigma,
+                    std::shared_ptr<Eigen::MatrixXf>& weight)
+            {
+                const int rows = prev->get_intensity()->rows();
+                const int cols = prev->get_intensity()->cols();
+
+                if(weight == NULL){
+                    weight = std::make_shared<Eigen::MatrixXf>(Eigen::MatrixXf(rows, cols));
+                }
+
+                const std::shared_ptr<Eigen::MatrixXf>& prev_depth = prev->get_depth();
+
+                __m128* prev_depth_sse = (__m128*)prev_depth->data();
+                __m128* residuals_sse = (__m128*)residuals->data();
+                __m128* corresps_sse = (__m128*)corresps->data();
+                __m128* bgm_sse = (__m128*)bgm->data();
+                __m128* labeled_bgm_sse = (__m128*)labeled_bgm->data();
+                __m128* weight_sse = (__m128*)weight->data();
+
+                __m128 inc = _mm_set_ps(3,2,1,0);
+
+                __m128 x_min = _mm_set_ps1(0);
+                __m128 x_max = _mm_set_ps1(prev_depth->cols()-1);
+                __m128 y_min = _mm_set_ps1(0);
+                __m128 y_max = _mm_set_ps1(prev_depth->rows()-1);
+
+                __m128 ones = _mm_set_ps1(1);
+                __m128 zeros = _mm_set_ps1(0);
+                __m128 minus_ones = _mm_set_ps1(-1);
+
+
+                float corresps_num = 0;
+                float sigma_temp = 0;
+                float mu_temp = 0;
+                float nu = 5.0;
+
+                __m128 sigma_sse = _mm_set_ps1(sigma);
+                __m128 mu_sse = _mm_set_ps1(mu);
+                __m128 sigma_rcp_sse = _mm_rcp_ps(sigma_sse);
+                __m128 sigma_rcp_sqaure_sse = _mm_mul_ps(sigma_rcp_sse,sigma_rcp_sse);
+                __m128 nu_sse = _mm_set_ps1(nu);
+                __m128 nu_plus_one_sse = _mm_set_ps1(nu+1);
+
+                __m128 depth_min = _mm_set_ps1(m_param.range_odo.min);
+                __m128 depth_max = _mm_set_ps1(m_param.range_odo.max);
+
+                auto lambda_for_weight = [&](const tbb::blocked_range<int>& r){
+                    for(int x0 = r.begin(); x0 < r.end(); ++x0){
+                        __m128 x0_sse = _mm_set_ps1(x0);
+
+                        for(int y0 = 0; y0 < rows/4; ++y0){
+                            std::size_t index = x0*prev_depth->rows()/4+y0;
+                            __m128 d0 = prev_depth_sse[index];
+                            __m128 corresps_val = corresps_sse[index];
+                            __m128 residuals_ori_val = residuals_sse[index];
+                            __m128 bgm_val = bgm_sse[index];
+                            __m128 labeled_bgm_val = labeled_bgm_sse[index];
+
+                            __m128 residuals_val = _mm_sub_ps(residuals_ori_val, mu_sse);
+
+                            __m128 available = _mm_and_ps(_mm_cmpeq_ps(ones, corresps_val), _mm_cmpneq_ps(bgm_val, zeros));
+                            available = _mm_and_ps(available, _mm_and_ps(_mm_cmpge_ps(d0, depth_min), _mm_cmpge_ps(depth_max, d0)));
+                            //available = _mm_and_ps(available, _mm_cmpeq_ps(ones, labeled_bgm_val));
+                            __m128 available_one = _mm_and_ps(available, ones);
+
+                            __m128 residuals_sqaure = _mm_mul_ps(residuals_val, residuals_val);
+
+                            // Compute weight for sensor model
+                            __m128 w1 = _mm_add_ps(nu_sse, _mm_mul_ps(residuals_sqaure, sigma_rcp_sqaure_sse));
+                            __m128 w2 = _mm_mul_ps(nu_plus_one_sse, _mm_rcp_ps(w1));
+                            __m128 w3 = _mm_and_ps(available, w2);
+
+
+                            // Compute weight for background and sensor models
+                            weight_sse[index] = _mm_and_ps(_mm_mul_ps(bgm_val, w3), available);   // Consider both sensor and background models  
+                            //weight_sse[index] = _mm_and_ps(ones, available);                    // Not consider any model
+                            //weight_sse[index] = _mm_and_ps(w3, available);                      // Consider only sensor model
+                            //weight_sse[index] = _mm_and_ps(bgm_val, available);                 // Consider only background model
+
+                            // Estimate sigma and mu for sensor model
+                            __m128 v0 = _mm_mul_ps(residuals_sqaure, nu_plus_one_sse);
+                            __m128 v1 = _mm_add_ps(nu_sse, _mm_mul_ps(residuals_sqaure, sigma_rcp_sqaure_sse));
+                            __m128 v2 = _mm_mul_ps(v0, _mm_rcp_ps(v1));
+                            __m128 v3 = _mm_and_ps(available, v2);
+                            residuals_ori_val = _mm_and_ps(available, residuals_ori_val);
+                            for(int k = 0; k < 4; ++k){
+                                mu_temp += ((float*)&residuals_ori_val)[k];
+                                sigma_temp += ((float*)&v3)[k];
+                                corresps_num += ((float*)&available_one)[k];
+                            }
+
+                        }
+                    }
+                };
+
+                lambda_for_weight(tbb::blocked_range<int>(0,cols));
+                // Update sigma
+                mu = mu_temp/corresps_num;
+
+                sigma = std::sqrt(sigma_temp/corresps_num);
+                //tbb::parallel_for(tbb::blocked_range<int>(0,cols), lambda_for_weight);
+            }
+
 
 
 
             Eigen::VectorXf compute_ksi(
-                    const std::shared_ptr<Eigen::MatrixXf>& bgm,
-                    const std::shared_ptr<Eigen::MatrixXf>& labeled_bgm,
+                    const std::shared_ptr<Eigen::MatrixXf>& weight,
                     const std::shared_ptr<Eigen::MatrixXf>& residuals,
                     const std::shared_ptr<Eigen::MatrixXf>& corresps,
                     const std::shared_ptr<Eigen::MatrixXf>& A)
@@ -247,32 +377,32 @@ namespace goodguy{
                 int corresps_num = 0;
                 for(int j = 0; j < corresps->cols(); ++j){
                     for(int i = 0; i < corresps->rows(); ++i){
-                        if((*corresps)(i,j) == 1.0){
+                        if((*weight)(i,j) != 0.0){
                             corresps_num++;
                         }
                     }
                 }
 
-                //std::cout << corresps_num << std::endl;
-
                 Eigen::MatrixXf b_solve(corresps_num, 1);
                 Eigen::MatrixXf A_solve(corresps_num, 6);
+                Eigen::MatrixXf W_solve(corresps_num, 1);
 
                 int count = 0;
                 for(int j = 0; j < corresps->cols(); ++j){
                     for(int i = 0; i < corresps->rows(); ++i){
-                        if((*corresps)(i,j) == 1.0){
+                        if((*weight)(i,j) != 0.0){
                             b_solve(count,0) = (*residuals)(i,j);
+                            W_solve(count,0) = (*weight)(i,j);
                             A_solve.row(count) = A->row(j*corresps->rows()+i);
                             count++;
                         }
                     }
                 }
 
-                Eigen::MatrixXf AtA = A_solve.transpose() * A_solve;
-                Eigen::MatrixXf Atb = A_solve.transpose() * b_solve;
+                Eigen::MatrixXf AtWA = A_solve.transpose() *W_solve.asDiagonal()* A_solve;
+                Eigen::MatrixXf AtWb = A_solve.transpose() *W_solve.asDiagonal()* b_solve;
 
-                ksi = AtA.ldlt().solve(Atb);
+                ksi = AtWA.ldlt().solve(AtWb);
 
                 return ksi;
             }
@@ -294,7 +424,6 @@ namespace goodguy{
                     const std::shared_ptr<goodguy::rgbd_image>& curr, 
                     const Eigen::Matrix4f& transform,
                     const goodguy::camera_parameter& cparam, 
-                    const float grad_min,
                     std::shared_ptr<Eigen::MatrixXf>& residuals,
                     std::shared_ptr<Eigen::MatrixXf>& corresps,
                     std::shared_ptr<Eigen::MatrixXf>& A)
@@ -369,9 +498,6 @@ namespace goodguy{
 
                 __m128 inc = _mm_set_ps(3,2,1,0);
 
-                __m128 grad_min_plus_sse = _mm_set_ps1(grad_min);
-                __m128 grad_min_minus_sse = _mm_set_ps1(-grad_min);
-
                 __m128 x_min = _mm_set_ps1(0);
                 __m128 x_max = _mm_set_ps1(prev_depth->cols()-2);
                 __m128 y_min = _mm_set_ps1(0);
@@ -383,6 +509,8 @@ namespace goodguy{
 
                 __m128 depth_min = _mm_set_ps1(m_param.range_odo.min);
                 __m128 depth_max = _mm_set_ps1(m_param.range_odo.max);
+
+                __m128 max_depth_diff = _mm_set_ps1(m_param.depth_diff_max);
 
 
                 auto lambda_for_residuals = [&](const tbb::blocked_range<int>& r){
@@ -417,6 +545,7 @@ namespace goodguy{
                             d0_available = _mm_and_ps(d0_available, _mm_cmpgt_ps(x_max, x1_warp_int));
                             d0_available = _mm_and_ps(d0_available, _mm_cmpgt_ps(y1_warp_int, y_min));
                             d0_available = _mm_and_ps(d0_available, _mm_cmpgt_ps(y_max, y1_warp_int));
+                            d0_available = _mm_and_ps(_mm_cmpge_ps(d1_warp, depth_min), _mm_cmpge_ps(depth_max, d1_warp));
 
                             x1_warp_int = _mm_min_ps(x1_warp_int, x_max);
                             x1_warp_int = _mm_max_ps(x1_warp_int, x_min);
@@ -438,18 +567,24 @@ namespace goodguy{
                             __m128 d1_available = _mm_and_ps(_mm_cmpge_ps(d1, depth_min), _mm_cmpge_ps(depth_max, d1));
                             d0_available = _mm_and_ps(d0_available, d1_available);
 
+                            __m128 depth_diff = _mm_sub_ps(d1_warp, d1);
+                            depth_diff = _mm_or_ps(_mm_and_ps(_mm_cmpge_ps(depth_diff, zeros), depth_diff), _mm_and_ps(_mm_cmplt_ps(depth_diff, zeros), _mm_mul_ps(depth_diff, minus_ones)));
+                            __m128 depth_diff_available = _mm_cmpge_ps(max_depth_diff, depth_diff);
+                            d0_available = _mm_and_ps(depth_diff_available, d0_available);
+                            d0_available = _mm_and_ps(d0_available, _mm_cmpord_ps(d0, d1));
+
                             __m128 x0y0 = _mm_set_ps((*curr_intensity)(((float*)&y1_warp_int)[3]+0, ((float*)&x1_warp_int)[3]+0), 
                                     (*curr_intensity)(((float*)&y1_warp_int)[2]+0, ((float*)&x1_warp_int)[2]+0), 
                                     (*curr_intensity)(((float*)&y1_warp_int)[1]+0, ((float*)&x1_warp_int)[1]+0), 
                                     (*curr_intensity)(((float*)&y1_warp_int)[0]+0, ((float*)&x1_warp_int)[0]+0));
                             __m128 x0y1 = _mm_set_ps((*curr_intensity)(((float*)&y1_warp_int)[3]+1, ((float*)&x1_warp_int)[3]+0), 
-                                    (*curr_intensity)(((float*)&y1_warp_int)[1]+1, ((float*)&x1_warp_int)[2]+0), 
-                                    (*curr_intensity)(((float*)&y1_warp_int)[2]+1, ((float*)&x1_warp_int)[1]+0), 
-                                    (*curr_intensity)(((float*)&y1_warp_int)[3]+1, ((float*)&x1_warp_int)[0]+0));
+                                    (*curr_intensity)(((float*)&y1_warp_int)[2]+1, ((float*)&x1_warp_int)[2]+0), 
+                                    (*curr_intensity)(((float*)&y1_warp_int)[1]+1, ((float*)&x1_warp_int)[1]+0), 
+                                    (*curr_intensity)(((float*)&y1_warp_int)[0]+1, ((float*)&x1_warp_int)[0]+0));
                             __m128 x1y0 = _mm_set_ps((*curr_intensity)(((float*)&y1_warp_int)[3]+0, ((float*)&x1_warp_int)[3]+1), 
-                                    (*curr_intensity)(((float*)&y1_warp_int)[1]+0, ((float*)&x1_warp_int)[2]+1), 
-                                    (*curr_intensity)(((float*)&y1_warp_int)[2]+0, ((float*)&x1_warp_int)[1]+1), 
-                                    (*curr_intensity)(((float*)&y1_warp_int)[3]+0, ((float*)&x1_warp_int)[0]+1));
+                                    (*curr_intensity)(((float*)&y1_warp_int)[2]+0, ((float*)&x1_warp_int)[2]+1), 
+                                    (*curr_intensity)(((float*)&y1_warp_int)[1]+0, ((float*)&x1_warp_int)[1]+1), 
+                                    (*curr_intensity)(((float*)&y1_warp_int)[0]+0, ((float*)&x1_warp_int)[0]+1));
                             __m128 x1y1 = _mm_set_ps((*curr_intensity)(((float*)&y1_warp_int)[3]+1, ((float*)&x1_warp_int)[3]+1), 
                                     (*curr_intensity)(((float*)&y1_warp_int)[2]+1, ((float*)&x1_warp_int)[2]+1), 
                                     (*curr_intensity)(((float*)&y1_warp_int)[1]+1, ((float*)&x1_warp_int)[1]+1), 
@@ -458,45 +593,16 @@ namespace goodguy{
                             __m128 prev_warped_intensity_val_0 = _mm_mul_ps(_mm_add_ps(_mm_mul_ps(x0y0, x0w), _mm_mul_ps(x1y0, x1w)), y0w);
                             __m128 prev_warped_intensity_val_1 = _mm_mul_ps(_mm_add_ps(_mm_mul_ps(x0y1, x0w), _mm_mul_ps(x1y1, x1w)), y1w);
                             __m128 prev_warped_intensity_val = _mm_add_ps(prev_warped_intensity_val_0, prev_warped_intensity_val_1);
-                            //__m128 prev_warped_intensity_val = x0y0;
 
                             __m128 prev_intensity_val = prev_intensity_sse[x0*prev_depth->rows()/4+y0];
+                            __m128 residuals_val = _mm_mul_ps(_mm_sub_ps(prev_intensity_val, prev_warped_intensity_val), ones);
 
+                            __m128 dIdx = prev_x_derivative_sse[x0*prev_depth->rows()/4+y0];
+                            __m128 dIdy = prev_y_derivative_sse[x0*prev_depth->rows()/4+y0];
 
-                            __m128 residuals_val = _mm_sub_ps(prev_intensity_val, prev_warped_intensity_val);
 
                             residuals_sse[x0*prev_depth->rows()/4+y0] = _mm_and_ps(d0_available, residuals_val);
                             corresps_sse[x0*prev_depth->rows()/4+y0] = _mm_and_ps(d0_available, ones);
-
-                            //__m128 dIdx = prev_x_derivative_sse[x0*prev_depth->rows()/4+y0];
-                            //__m128 dIdy = prev_y_derivative_sse[x0*prev_depth->rows()/4+y0];
-
-                            __m128 dIdx = _mm_set_ps((*curr_x_derivative)(((float*)&y1_warp_int)[3], ((float*)&x1_warp_int)[3]),
-                                    (*curr_x_derivative)(((float*)&y1_warp_int)[2], ((float*)&x1_warp_int)[2]),
-                                    (*curr_x_derivative)(((float*)&y1_warp_int)[1], ((float*)&x1_warp_int)[1]),
-                                    (*curr_x_derivative)(((float*)&y1_warp_int)[0], ((float*)&x1_warp_int)[0]));
-
-
-
-                            __m128 dIdy = _mm_set_ps((*curr_y_derivative)(((float*)&y1_warp_int)[3], ((float*)&x1_warp_int)[3]),
-                                    (*curr_y_derivative)(((float*)&y1_warp_int)[2], ((float*)&x1_warp_int)[2]),
-                                    (*curr_y_derivative)(((float*)&y1_warp_int)[1], ((float*)&x1_warp_int)[1]),
-                                    (*curr_y_derivative)(((float*)&y1_warp_int)[0], ((float*)&x1_warp_int)[0]));
-
-                            for(int i = 0; i < 4; ++i){
-                                if(((float*)&dIdx)[i] >= 0 && ((float*)&dIdx)[i]  < grad_min){
-                                    ((float*)&dIdx)[i] = grad_min;
-                                }
-                                else if(((float*)&dIdx)[i] <= 0 && ((float*)&dIdx)[i]  > -grad_min){
-                                    ((float*)&dIdx)[i] = -grad_min;
-                                }
-                                if(((float*)&dIdy)[i] >= 0 && ((float*)&dIdy)[i]  < grad_min){
-                                    ((float*)&dIdy)[i] = grad_min;
-                                }
-                                else if(((float*)&dIdy)[i] <= 0 && ((float*)&dIdy)[i]  > -grad_min){
-                                    ((float*)&dIdy)[i] = -grad_min;
-                                }
-                            }
 
                             __m128 Z1 = d1;
                             __m128 Z1_rcp = _mm_rcp_ps(Z1);
@@ -515,18 +621,39 @@ namespace goodguy{
                             __m128 A4 = v1;
                             __m128 A5 = v2;
 
-                            A_sse[x0*rows/4+y0 + rows/4*cols*0] = A0;
-                            A_sse[x0*rows/4+y0 + rows/4*cols*1] = A1;
-                            A_sse[x0*rows/4+y0 + rows/4*cols*2] = A2;
-                            A_sse[x0*rows/4+y0 + rows/4*cols*3] = A3;
-                            A_sse[x0*rows/4+y0 + rows/4*cols*4] = A4;
-                            A_sse[x0*rows/4+y0 + rows/4*cols*5] = A5;
+                            A_sse[x0*rows/4+y0 + rows/4*cols*0] = _mm_and_ps(d0_available, A0);
+                            A_sse[x0*rows/4+y0 + rows/4*cols*1] = _mm_and_ps(d0_available, A1);
+                            A_sse[x0*rows/4+y0 + rows/4*cols*2] = _mm_and_ps(d0_available, A2);
+                            A_sse[x0*rows/4+y0 + rows/4*cols*3] = _mm_and_ps(d0_available, A3);
+                            A_sse[x0*rows/4+y0 + rows/4*cols*4] = _mm_and_ps(d0_available, A4);
+                            A_sse[x0*rows/4+y0 + rows/4*cols*5] = _mm_and_ps(d0_available, A5);
 
                         }
                     }
                 };
-                //lambda_for_residuals(tbb::blocked_range<int>(0,cols));
                 tbb::parallel_for(tbb::blocked_range<int>(0,cols), lambda_for_residuals);
+            }
+
+
+            std::shared_ptr<Eigen::MatrixXf> get_double_image(const std::shared_ptr<Eigen::MatrixXf>& image){
+
+                std::shared_ptr<Eigen::MatrixXf> double_image(new Eigen::MatrixXf(Eigen::MatrixXf::Zero(image->rows()*2, image->cols()*2)));
+
+                auto lambda_for_double = [&](const tbb::blocked_range<int>& r){
+                    for(int j = r.begin(); j < r.end(); j += 1){
+                        for(int i = 0; i < image->rows(); i += 1){
+                            int i_plus = std::min(i+1, (int)image->rows()-1);
+                            int j_plus = std::min(j+1, (int)image->cols()-1);
+                            (*double_image)(2*i+0,2*j+0) = (*image)(i+0,j+0);
+                            (*double_image)(2*i+0,2*j+1) = (*image)(i+0,j+0)*0.5 + (*image)(i+0,j_plus)*0.5;
+                            (*double_image)(2*i+1,2*j+0) = (*image)(i+0,j+0)*0.5 + (*image)(i_plus,j+0)*0.5;
+                            (*double_image)(2*i+1,2*j+1) = (*image)(i+0,j+0)*0.5 + (*image)(i_plus,j_plus)*0.5;
+                        }
+                    }
+                };
+                tbb::parallel_for(tbb::blocked_range<int>(0,image->cols()), lambda_for_double);
+
+                return double_image;
             }
 
             std::shared_ptr<Eigen::MatrixXf> get_half_image(const std::shared_ptr<Eigen::MatrixXf>& image){
@@ -549,30 +676,6 @@ namespace goodguy{
                 std::shared_ptr<Eigen::MatrixXf> derivative_x(new Eigen::MatrixXf(Eigen::MatrixXf::Zero(intensity->rows(), intensity->cols())));
 
                 auto lambda_for_derivative = [&](const tbb::blocked_range<int>& r){
-                    for(int i = r.begin(); i < r.end(); ++i){
-                        for(int j = 0; j < intensity->cols(); ++j){
-                            int prev = std::max(j-1, 0);
-                            int next = std::min(j+1, (int)intensity->cols()-1);
-                            (*derivative_x)(i,j) = ((*intensity)(i, next) - (*intensity)(i, prev))*0.5f;
-                        }
-                    }
-                };
-                auto lambda_for_derivative2 = [&](const tbb::blocked_range<int>& r){
-                    for(int i = r.begin(); i < r.end(); ++i){
-                        for(int j = 0; j < intensity->cols(); ++j){
-                            int left = std::max(j-1, 0);
-                            int right = std::min(j+1, (int)intensity->cols()-1);
-                            int up = std::max(i-1, 0);
-                            int down = std::min(i+1, (int)intensity->rows()-1);
-                            (*derivative_x)(i,j)  = (*intensity)(up, right) + 2.0*(*intensity)(i, right) + (*intensity)(down, right);
-                            (*derivative_x)(i,j)  += -(*intensity)(up, left) - 2.0*(*intensity)(i, left) - (*intensity)(down, left);
-                            (*derivative_x)(i,j) *= 1/8.0;
-                        }
-                    }
-                };
-                //tbb::parallel_for(tbb::blocked_range<int>(0,intensity->rows()), lambda_for_derivative);
-
-                auto lambda_for_derivative3 = [&](const tbb::blocked_range<int>& r){
                     for(int j = r.begin(); j < r.end(); ++j){
                         for(int i = 0; i < intensity->rows()/4; ++i){
 
@@ -610,27 +713,12 @@ namespace goodguy{
                             __m128 val =  _mm_add_ps(_mm_add_ps(_mm_add_ps(ur, dr), cr), cr);
                             __m128 val2 = _mm_sub_ps(_mm_sub_ps(_mm_sub_ps(_mm_sub_ps(val, ul), dl), cl), cl);
                             __m128 val3 = _mm_mul_ps(val2, _mm_set1_ps(0.125));
-                            //__m128 val = _mm_sub_ps(cr, cl);
-                            //__m128 val3 = _mm_mul_ps(val, _mm_set1_ps(0.5));
-
 
                             _mm_store_ps(derivative_x->data()+j*(int)intensity->rows()+4*i, val3);
-
-
-                            //derivative_x_sse[index] = _mm_add_ps(_mm_add_ps(_mm_add_ps(ur, dr), cr), cr);
-                            //derivative_x_sse[index] = _mm_sub_ps(_mm_sub_ps(_mm_sub_ps(_mm_sub_ps(derivative_x_sse[index], ul), dl), cl), cl);
-
-
-
-                            /*
-                            (*derivative_x)(i,j)  = (*intensity)(up, right) + 2.0*(*intensity)(i, right) + (*intensity)(down, right);
-                            (*derivative_x)(i,j)  += -(*intensity)(up, left) - 2.0*(*intensity)(i, left) - (*intensity)(down, left);
-                            (*derivative_x)(i,j) *= 1/8.0;
-                            */
                         }
                     }
                 };
-                tbb::parallel_for(tbb::blocked_range<int>(0,intensity->cols()), lambda_for_derivative3);
+                tbb::parallel_for(tbb::blocked_range<int>(0,intensity->cols()), lambda_for_derivative);
 
                 return derivative_x;
             }
@@ -638,18 +726,8 @@ namespace goodguy{
             std::shared_ptr<Eigen::MatrixXf> calculate_derivative_y(const std::shared_ptr<Eigen::MatrixXf>& intensity){
                 std::shared_ptr<Eigen::MatrixXf> derivative_y(new Eigen::MatrixXf(Eigen::MatrixXf::Zero(intensity->rows(), intensity->cols())));
 
-                auto lambda_for_derivative = [&](const tbb::blocked_range<int>& r){
-                    for(int j = r.begin(); j < r.end(); ++j){
-                        for(int i = 0; i < intensity->rows(); ++i){
-                            int prev = std::max(0, i-1);
-                            int next = std::min((int)intensity->rows()-1, i+1);
-                            (*derivative_y)(i,j) = ((*intensity)(next, j) - (*intensity)(prev, j))*0.5f;
-                        }
-                    }
-                };
-
                 __m128* derivative_y_sse = (__m128*)derivative_y->data();
-                auto lambda_for_derivative3 = [&](const tbb::blocked_range<int>& r){
+                auto lambda_for_derivative = [&](const tbb::blocked_range<int>& r){
                     for(int j = r.begin(); j < r.end(); ++j){
                         for(int i = 0; i < intensity->rows()/4; ++i){
 
@@ -688,16 +766,13 @@ namespace goodguy{
                             __m128 val =  _mm_add_ps(_mm_add_ps(_mm_add_ps(dr, dl), dc), dc);
                             __m128 val2 = _mm_sub_ps(_mm_sub_ps(_mm_sub_ps(_mm_sub_ps(val, ul), ur), uc), uc);
                             __m128 val3 = _mm_mul_ps(val2, _mm_set1_ps(0.125));
-                            //__m128 val = _mm_sub_ps(dc, uc);
-                            //__m128 val3 = _mm_mul_ps(val, _mm_set1_ps(0.5));
 
                             _mm_store_ps(derivative_y->data()+j*(int)intensity->rows()+4*i, val3);
 
                         }
                     }
                 };
-                tbb::parallel_for(tbb::blocked_range<int>(0,intensity->cols()), lambda_for_derivative3);
-                //lambda_for_derivative3(tbb::blocked_range<int>(0,intensity->cols()));
+                tbb::parallel_for(tbb::blocked_range<int>(0,intensity->cols()), lambda_for_derivative);
 
                 return derivative_y;
             }
@@ -1009,8 +1084,8 @@ namespace goodguy{
                             float median = diff[diff.size()/2];
                             float sigma_val = median/0.6744/std::sqrt(2);
 
-                            if(sigma_val < m_param.sig_min){
-                                (*sigma)(i,j) = m_param.sig_min;
+                            if(sigma_val < std::numeric_limits<float>::epsilon()){
+                                (*sigma)(i,j) = std::numeric_limits<float>::epsilon();
                             }
                             else{
                                 (*sigma)(i,j) = median/0.6744/std::sqrt(2);
