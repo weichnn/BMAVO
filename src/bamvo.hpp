@@ -1,9 +1,45 @@
+/*****************************************************************************
+*
+* Copyright (c) 2016, Deok-Hwa Kim 
+* All rights reserved.
+*
+* Redistribution and use in source and binary forms, with or without
+* modification, are permitted provided that the following conditions are met:
+* 1. Redistributions of source code must retain the above copyright
+*    notice, this list of conditions and the following disclaimer.
+* 2. Redistributions in binary form must reproduce the above copyright
+*    notice, this list of conditions and the following disclaimer in the
+*    documentation and/or other materials provided with the distribution.
+* 3. Neither the name of the KAIST nor the
+*    names of its contributors may be used to endorse or promote products
+*    derived from this software without specific prior written permission.
+* 4. It does not guarantee any patent licenses.
+*
+* THIS SOFTWARE IS PROVIDED BY DEOK-HWA KIM ''AS IS'' AND ANY
+* EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+* WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+* DISCLAIMED. IN NO EVENT SHALL DEOK-HWA KIM BE LIABLE FOR ANY
+* DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+* (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+* LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+* ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+* (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*
+********************************************************************************/
+
+#ifndef __BAMVO_HPP__
+#define __BAMVO_HPP__
+
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/eigen.hpp>
+
 #include <Eigen/Eigen>
 #include <unsupported/Eigen/MatrixFunctions>
 
 #include <xmmintrin.h>
+
+#include <tbb/tbb.h>
 
 #include <iostream>
 #include <vector>
@@ -12,26 +48,18 @@
 #include <memory>
 #include <cmath>
 #include <algorithm>
-//#include <math.h>
 #include <cfenv>
 
 
-#include <tbb/tbb.h>
-//#include <tbb/task_scheduler_init.h>
-//#include <tbb/parallel_for.h>
-
-
-#include "computation_time.hpp"
 #include "parameter.hpp"
 #include "rgbd_image.hpp"
 
 namespace goodguy{
     class bamvo{
         public:
-            bamvo() : m_time("BAMVO"), m_global_pose(Eigen::Matrix4f::Identity()) { }
+            bamvo() : m_global_pose(Eigen::Matrix4f::Identity()) { }
 
             void add(const cv::Mat& color, const cv::Mat& depth){
-                m_time.global_tic();
                 if(depth.type() != CV_32FC1 || color.type() != CV_8UC3){ 
                     std::cerr << "Not supported data type!" << std::endl; 
                     return; 
@@ -60,7 +88,6 @@ namespace goodguy{
                 std::shared_ptr<Eigen::MatrixXf> curr_derivative_x = calculate_derivative_x(curr_intensity_eig);
                 std::shared_ptr<Eigen::MatrixXf> curr_derivative_y = calculate_derivative_y(curr_intensity_eig);
 
-                m_time.tic();
 
                 m_curr_rgbd_pyramid.emplace_back(std::make_shared<goodguy::rgbd_image>(
                             goodguy::rgbd_image(curr_intensity_eig, curr_depth_eig, curr_derivative_x, curr_derivative_y, m_param.camera_params)));
@@ -81,16 +108,11 @@ namespace goodguy{
                                 goodguy::rgbd_image(half_intensity, half_depth, half_derivative_x, half_derivative_y, half_param)));
 
                 }
-                m_time.toc();
-                m_time.tic();
 
 
 
                 // Compute background model image
                 std::pair<std::shared_ptr<Eigen::MatrixXf>, std::shared_ptr<Eigen::MatrixXf>> bgm_set = compute_bgm(m_hist_depth, m_hist_poses, m_curr_rgbd_pyramid[m_param.bgm_level]->get_param());
-
-                m_time.toc();
-                m_time.tic();
 
                 std::vector<std::shared_ptr<Eigen::MatrixXf>> bgm, labeled_bgm;
 
@@ -136,12 +158,6 @@ namespace goodguy{
                 }
 
 
-
-                m_time.toc();
-
-                m_time.tic();
-
-
                 if(m_prev_rgbd_pyramid.size() != 0){
                     // Compute Odometry
                     Eigen::Matrix4f curr_pose = compute_odometry(m_prev_rgbd_pyramid, m_curr_rgbd_pyramid, bgm, labeled_bgm, m_param.iter_count);
@@ -170,14 +186,8 @@ namespace goodguy{
 
                     m_global_pose =  curr_pose * m_global_pose;
 
-                    std::cout << "\t\t\t\t\t\t\t\t" << m_global_pose.inverse() << std::endl;;
-
-
                 }
 
-                m_time.toc();
-
-                m_time.global_toc();
             }
 
             Eigen::Matrix4f get_current_pose() const { return m_global_pose; }
@@ -214,9 +224,6 @@ namespace goodguy{
                 for(int level = max_level; level >= 0; --level){
                     const goodguy::camera_parameter& param = curr_rgbd_pyramid[level]->get_param();
 
-                    const int rows = curr_rgbd_pyramid[level]->get_intensity()->rows();
-                    const int cols = curr_rgbd_pyramid[level]->get_intensity()->cols();
-
                     std::shared_ptr<Eigen::MatrixXf> residuals;
                     std::shared_ptr<Eigen::MatrixXf> corresps;
                     std::shared_ptr<Eigen::MatrixXf> A;
@@ -224,16 +231,14 @@ namespace goodguy{
                     const std::shared_ptr<goodguy::rgbd_image>& prev = prev_rgbd_pyramid[level];
                     const std::shared_ptr<goodguy::rgbd_image>& curr = curr_rgbd_pyramid[level];
                     const std::shared_ptr<Eigen::MatrixXf>& bgm = bgm_pyramid[level];
-                    const std::shared_ptr<Eigen::MatrixXf>& labeled_bgm = labeled_bgm_pyramid[level];
 
                     std::shared_ptr<Eigen::MatrixXf> weight;
-
 
                     
                     for(int iter = 0; iter < iter_count[level]; ++iter){
 
                         compute_residuals_with_A(prev, curr, odometry, param, residuals, corresps, A);
-                        compute_weight(prev, residuals, corresps, bgm, labeled_bgm, mu, sigma, weight);
+                        compute_weight(prev, residuals, corresps, bgm, mu, sigma, weight);
 
 
                         Eigen::VectorXf ksi = compute_ksi(weight, residuals, corresps, A); 
@@ -258,7 +263,6 @@ namespace goodguy{
                     const std::shared_ptr<Eigen::MatrixXf>& residuals,
                     const std::shared_ptr<Eigen::MatrixXf>& corresps,
                     const std::shared_ptr<Eigen::MatrixXf>& bgm,
-                    const std::shared_ptr<Eigen::MatrixXf>& labeled_bgm,
                     float& mu,
                     float& sigma,
                     std::shared_ptr<Eigen::MatrixXf>& weight)
@@ -276,20 +280,10 @@ namespace goodguy{
                 __m128* residuals_sse = (__m128*)residuals->data();
                 __m128* corresps_sse = (__m128*)corresps->data();
                 __m128* bgm_sse = (__m128*)bgm->data();
-                __m128* labeled_bgm_sse = (__m128*)labeled_bgm->data();
                 __m128* weight_sse = (__m128*)weight->data();
-
-                __m128 inc = _mm_set_ps(3,2,1,0);
-
-                __m128 x_min = _mm_set_ps1(0);
-                __m128 x_max = _mm_set_ps1(prev_depth->cols()-1);
-                __m128 y_min = _mm_set_ps1(0);
-                __m128 y_max = _mm_set_ps1(prev_depth->rows()-1);
 
                 __m128 ones = _mm_set_ps1(1);
                 __m128 zeros = _mm_set_ps1(0);
-                __m128 minus_ones = _mm_set_ps1(-1);
-
 
                 float corresps_num = 0;
                 float sigma_temp = 0;
@@ -308,21 +302,16 @@ namespace goodguy{
 
                 auto lambda_for_weight = [&](const tbb::blocked_range<int>& r){
                     for(int x0 = r.begin(); x0 < r.end(); ++x0){
-                        __m128 x0_sse = _mm_set_ps1(x0);
-
                         for(int y0 = 0; y0 < rows/4; ++y0){
                             std::size_t index = x0*prev_depth->rows()/4+y0;
                             __m128 d0 = prev_depth_sse[index];
                             __m128 corresps_val = corresps_sse[index];
                             __m128 residuals_ori_val = residuals_sse[index];
                             __m128 bgm_val = bgm_sse[index];
-                            __m128 labeled_bgm_val = labeled_bgm_sse[index];
-
                             __m128 residuals_val = _mm_sub_ps(residuals_ori_val, mu_sse);
 
                             __m128 available = _mm_and_ps(_mm_cmpeq_ps(ones, corresps_val), _mm_cmpneq_ps(bgm_val, zeros));
                             available = _mm_and_ps(available, _mm_and_ps(_mm_cmpge_ps(d0, depth_min), _mm_cmpge_ps(depth_max, d0)));
-                            //available = _mm_and_ps(available, _mm_cmpeq_ps(ones, labeled_bgm_val));
                             __m128 available_one = _mm_and_ps(available, ones);
 
                             __m128 residuals_sqaure = _mm_mul_ps(residuals_val, residuals_val);
@@ -450,9 +439,6 @@ namespace goodguy{
                 const std::shared_ptr<Eigen::MatrixXf>& prev_x_derivative = prev->get_x_derivative();
                 const std::shared_ptr<Eigen::MatrixXf>& prev_y_derivative = prev->get_y_derivative();
 
-                const std::shared_ptr<Eigen::MatrixXf>& curr_x_derivative = curr->get_x_derivative();
-                const std::shared_ptr<Eigen::MatrixXf>& curr_y_derivative = curr->get_y_derivative();
-
                 const std::shared_ptr<Eigen::MatrixXf>& prev_depth = prev->get_depth();
                 const std::shared_ptr<Eigen::MatrixXf>& curr_depth = curr->get_depth();
 
@@ -471,15 +457,12 @@ namespace goodguy{
                 __m128 cy_sse = _mm_set_ps1(cy);
 
                 __m128* prev_depth_sse = (__m128*)prev_depth->data();
-                __m128* curr_depth_sse = (__m128*)curr_depth->data();
                 __m128* prev_intensity_sse = (__m128*)prev_intensity->data();
                 __m128* residuals_sse = (__m128*)residuals->data();
                 __m128* corresps_sse = (__m128*)corresps->data();
                 __m128* A_sse = (__m128*)A->data();
                 __m128* prev_x_derivative_sse = (__m128*)prev_x_derivative->data();
                 __m128* prev_y_derivative_sse = (__m128*)prev_y_derivative->data();
-                __m128* curr_x_derivative_sse = (__m128*)curr_x_derivative->data();
-                __m128* curr_y_derivative_sse = (__m128*)curr_y_derivative->data();
 
                 __m128 KRK_inv_0_0 = _mm_set_ps1(KRK_inv(0,0));
                 __m128 KRK_inv_0_1 = _mm_set_ps1(KRK_inv(0,1));
@@ -597,7 +580,6 @@ namespace goodguy{
 
                             __m128 dIdx = prev_x_derivative_sse[x0*prev_depth->rows()/4+y0];
                             __m128 dIdy = prev_y_derivative_sse[x0*prev_depth->rows()/4+y0];
-
 
                             residuals_sse[x0*prev_depth->rows()/4+y0] = _mm_and_ps(d0_available, residuals_val);
                             corresps_sse[x0*prev_depth->rows()/4+y0] = _mm_and_ps(d0_available, ones);
@@ -724,12 +706,9 @@ namespace goodguy{
             std::shared_ptr<Eigen::MatrixXf> calculate_derivative_y(const std::shared_ptr<Eigen::MatrixXf>& intensity){
                 std::shared_ptr<Eigen::MatrixXf> derivative_y(new Eigen::MatrixXf(Eigen::MatrixXf::Zero(intensity->rows(), intensity->cols())));
 
-                __m128* derivative_y_sse = (__m128*)derivative_y->data();
                 auto lambda_for_derivative = [&](const tbb::blocked_range<int>& r){
                     for(int j = r.begin(); j < r.end(); ++j){
                         for(int i = 0; i < intensity->rows()/4; ++i){
-
-                            std::size_t index = j*(intensity->rows()/4)+i;
 
                             int left = std::max(j-1, 0);
                             int right = std::min(j+1, (int)intensity->cols()-1);
@@ -811,15 +790,7 @@ namespace goodguy{
                 Eigen::Matrix3f KRK_inv = K*R*K.inverse();
                 Eigen::Vector3f Kt = K*pose.block<3,1>(0,3);
 
-                __m128 fx_sse = _mm_set_ps1(fx);
-                __m128 fy_sse = _mm_set_ps1(fy);
-                __m128 fx_rcp_sse = _mm_rcp_ps(fx_sse);
-                __m128 fy_rcp_sse = _mm_rcp_ps(fy_sse);
-                __m128 cx_sse = _mm_set_ps1(cx);
-                __m128 cy_sse = _mm_set_ps1(cy);
-
                 __m128* depth_sse = (__m128*)depth.data();
-                __m128* warped_depth_sse = (__m128*)warped_depth->data();
 
                 __m128 KRK_inv_0_0 = _mm_set_ps1(KRK_inv(0,0));
                 __m128 KRK_inv_0_1 = _mm_set_ps1(KRK_inv(0,1));
@@ -1125,10 +1096,10 @@ namespace goodguy{
 
             bamvo_parameter m_param;
 
-            ComputationTime m_time;
-
             Eigen::Matrix4f m_global_pose;
 
 
     };
 }
+
+#endif
