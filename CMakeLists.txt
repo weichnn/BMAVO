@@ -31,10 +31,8 @@ include_directories(
 )
 
 
-set(CMAKE_CXX_FLAGS "-W -Wall ${CMAKE_CXX_FLAGS} -std=c++11 -Ofast -msse -msse2 -msse3 -mavx -fopenmp -march=native -ffast-math -m128bit-long-double")
-
 add_executable(bamvo_node src/bamvo_node.cpp)
-
+set_target_properties(bamvo_node PROPERTIES COMPILE_FLAGS "${BUILD_FLAGS} -std=c++11 -Ofast -msse -msse2 -msse3 -mavx -march=native -ffast-math -m128bit-long-double")
 add_dependencies(bamvo_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 target_link_libraries(bamvo_node ${catkin_LIBRARIES} ${TBB_LIBRARIES} ${Boost_LIBRARIES})
