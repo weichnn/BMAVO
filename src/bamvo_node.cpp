@@ -112,7 +112,7 @@ void callback(
 
     tf::StampedTransform base2rgb_tf;
 	try{
-		tf_listener_ptr->lookupTransform(g_rgb_frame_name, g_base_frame_name, received_time, base2rgb_tf);
+		tf_listener_ptr->lookupTransform(g_base_frame_name, g_rgb_frame_name, ros::Time(0), base2rgb_tf);
 	} catch (tf::TransformException& ex){
 		ROS_ERROR("TRANSFORM EXCEPTION: %s", ex.what());
 		return;
@@ -121,26 +121,16 @@ void callback(
     Eigen::Affine3d base2rgb_eigen;
     tf::transformTFToEigen(base2rgb_tf, base2rgb_eigen);
 
-    Eigen::Affine3d curr_pose_ros_coordinate(curr_pose.cast<double>());
-    curr_pose_ros_coordinate = curr_pose_ros_coordinate * base2rgb_eigen;
+    Eigen::Affine3d global_pose_eigen(curr_pose.cast<double>());
+    global_pose_eigen = base2rgb_eigen * global_pose_eigen * base2rgb_eigen.inverse();
 
 	geometry_msgs::PoseStamped local_camera_pose;
-	tf::poseEigenToMsg(curr_pose_ros_coordinate, local_camera_pose.pose);
+	tf::poseEigenToMsg(global_pose_eigen, local_camera_pose.pose);
 	local_camera_pose.header.stamp = received_time;
 	local_camera_pose.header.frame_id = g_rgb_frame_name;
 
 	geometry_msgs::PoseStamped global_pose;
-	try{
-		tf_listener_ptr->transformPose(g_base_frame_name, received_time, local_camera_pose, local_camera_pose.header.frame_id, global_pose);
-	} catch (tf::TransformException& ex){
-		ROS_ERROR("TRANSFORM EXCEPTION: %s", ex.what());
-		return;
-	}
-
-
-	Eigen::Affine3d global_pose_eigen;
-	tf::poseMsgToEigen(global_pose.pose, global_pose_eigen);
-    std::cout << global_pose_eigen.matrix() << std::endl;
+    tf::poseEigenToMsg(global_pose_eigen, global_pose.pose);
 
     if(g_enable_odom_tf){
         tf::Transform odom_tf;
@@ -196,7 +186,7 @@ int main(int argc, char** argv){
 
     goodguy::bamvo vo;
 
-    ros::Publisher pub_odom = nh.advertise<nav_msgs::Odometry>(g_odom_frame_name, 50);
+    ros::Publisher pub_odom = local_nh.advertise<nav_msgs::Odometry>(g_odom_frame_name, 50);
 
     tf::TransformBroadcaster tf_broadcaster;
     tf::TransformListener tf_listener;

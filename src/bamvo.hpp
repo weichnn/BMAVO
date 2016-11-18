@@ -879,7 +879,6 @@ namespace goodguy{
             {
 
                 if(depth.size() == 0){
-                    std::cerr << "Not contained data!!" << std::endl;
                     return std::make_pair(std::shared_ptr<Eigen::MatrixXf>(), std::shared_ptr<Eigen::MatrixXf>());
                 }
                 int cols = depth.front()->cols();;
@@ -922,7 +921,6 @@ namespace goodguy{
 
             std::shared_ptr<Eigen::MatrixXf> calculate_labeled_bgm_impl_sse(const std::shared_ptr<Eigen::MatrixXf>& bgm){
                 if(bgm == NULL){
-                    std::cerr << "BGM is empty!" << std::endl;
                     return std::shared_ptr<Eigen::MatrixXf>();
                 }
 
@@ -956,7 +954,6 @@ namespace goodguy{
 
             std::shared_ptr<Eigen::MatrixXf> calculate_labeled_bgm_impl(const std::shared_ptr<Eigen::MatrixXf>& bgm){
                 if(bgm == NULL){
-                    std::cerr << "BGM is empty!" << std::endl;
                     return std::shared_ptr<Eigen::MatrixXf>();
                 }
 
@@ -989,7 +986,6 @@ namespace goodguy{
 
             std::shared_ptr<Eigen::MatrixXf> calculate_bgm_impl(const std::vector<std::shared_ptr<Eigen::MatrixXf>>& depth_differences, const std::shared_ptr<Eigen::MatrixXf>& last_depth, const std::shared_ptr<Eigen::MatrixXf>& sigma){
                 if(depth_differences.size() == 0){
-                    std::cerr << "Data is empty!" << std::endl;
                     return std::shared_ptr<Eigen::MatrixXf>();
                 }
 
@@ -1033,7 +1029,6 @@ namespace goodguy{
 
             std::shared_ptr<Eigen::MatrixXf> calculate_sigma(const std::vector<std::shared_ptr<Eigen::MatrixXf>>& depth_differences){
                 if(depth_differences.size() == 0){
-                    std::cerr << "Data is empty!" << std::endl;
                     return std::shared_ptr<Eigen::MatrixXf>();
                 }
 
