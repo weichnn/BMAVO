@@ -1,6 +1,6 @@
 /*****************************************************************************
 *
-* Copyright (c) 2016, Deok-Hwa Kim 
+* Copyright (c) 2016, Deok-Hwa Kim
 * All rights reserved.
 *
 * Redistribution and use in source and binary forms, with or without
@@ -66,13 +66,13 @@ std::string g_odom_frame_name;
 std::string g_base_frame_name;
 
 void callback(
-        const sensor_msgs::ImageConstPtr& image, 
-        const sensor_msgs::ImageConstPtr& depth, 
-        const sensor_msgs::CameraInfoConstPtr& camera_info,
-        ros::Publisher pub_odom,
-        tf::TransformBroadcaster* tf_broadcaster_ptr, 
-        tf::TransformListener* tf_listener_ptr, 
-        goodguy::bamvo* vo)
+    const sensor_msgs::ImageConstPtr& image,
+    const sensor_msgs::ImageConstPtr& depth,
+    const sensor_msgs::CameraInfoConstPtr& camera_info,
+    ros::Publisher pub_odom,
+    tf::TransformBroadcaster* tf_broadcaster_ptr,
+    tf::TransformListener* tf_listener_ptr,
+    goodguy::bamvo* vo)
 {
 
     ros::Time received_time = ros::Time::now();
@@ -81,13 +81,13 @@ void callback(
     cv::Mat depth_in = cv_bridge::toCvShare(depth)->image;
 
     cv::Mat depth_meter;
-    if(depth_in.type() == CV_16UC1){
+    if(depth_in.type() == CV_16UC1) {
         depth_in.convertTo( depth_meter, CV_32FC1, 1.0/1000.0 );
     }
-    else if(depth_in.type() == CV_32FC1){
+    else if(depth_in.type() == CV_32FC1) {
         depth_in.copyTo(depth_meter);
     }
-    else{
+    else {
         std::cerr << "Wrong Depth! " << std::endl;
         return;
     }
@@ -111,12 +111,12 @@ void callback(
     Eigen::Matrix4f curr_pose = vo->get_current_pose().inverse();
 
     tf::StampedTransform base2rgb_tf;
-	try{
-		tf_listener_ptr->lookupTransform(g_base_frame_name, g_rgb_frame_name, ros::Time(0), base2rgb_tf);
-	} catch (tf::TransformException& ex){
-		ROS_ERROR("TRANSFORM EXCEPTION: %s", ex.what());
-		return;
-	}
+    try {
+        tf_listener_ptr->lookupTransform(g_base_frame_name, g_rgb_frame_name, ros::Time(0), base2rgb_tf);
+    } catch (tf::TransformException& ex) {
+        ROS_ERROR("TRANSFORM EXCEPTION: %s", ex.what());
+        return;
+    }
 
     Eigen::Affine3d base2rgb_eigen;
     tf::transformTFToEigen(base2rgb_tf, base2rgb_eigen);
@@ -124,31 +124,31 @@ void callback(
     Eigen::Affine3d global_pose_eigen(curr_pose.cast<double>());
     global_pose_eigen = base2rgb_eigen * global_pose_eigen * base2rgb_eigen.inverse();
 
-	geometry_msgs::PoseStamped local_camera_pose;
-	tf::poseEigenToMsg(global_pose_eigen, local_camera_pose.pose);
-	local_camera_pose.header.stamp = received_time;
-	local_camera_pose.header.frame_id = g_rgb_frame_name;
+    geometry_msgs::PoseStamped local_camera_pose;
+    tf::poseEigenToMsg(global_pose_eigen, local_camera_pose.pose);
+    local_camera_pose.header.stamp = received_time;
+    local_camera_pose.header.frame_id = g_rgb_frame_name;
 
-	geometry_msgs::PoseStamped global_pose;
+    geometry_msgs::PoseStamped global_pose;
     tf::poseEigenToMsg(global_pose_eigen, global_pose.pose);
 
-    if(g_enable_odom_tf){
+    if(g_enable_odom_tf) {
         tf::Transform odom_tf;
         tf::transformEigenToTF(global_pose_eigen, odom_tf);
         tf_broadcaster_ptr->sendTransform(tf::StampedTransform(odom_tf, received_time, g_odom_frame_name,  g_base_frame_name));
-	}
+    }
 
-	if(g_enable_odom){
-		nav_msgs::Odometry odom_nav;
-		odom_nav.header.stamp = received_time;
+    if(g_enable_odom) {
+        nav_msgs::Odometry odom_nav;
+        odom_nav.header.stamp = received_time;
 
-		odom_nav.child_frame_id = g_base_frame_name;
-		odom_nav.header.frame_id = g_odom_frame_name;
-		odom_nav.pose.pose = global_pose.pose;
+        odom_nav.child_frame_id = g_base_frame_name;
+        odom_nav.header.frame_id = g_odom_frame_name;
+        odom_nav.pose.pose = global_pose.pose;
 
-		pub_odom.publish(odom_nav);
+        pub_odom.publish(odom_nav);
 
-	}
+    }
 
     cv::imshow("Received RGB image", rgb_resize);
     cv::imshow("Received Depth image", depth_resize);
@@ -158,7 +158,7 @@ void callback(
 
 
 
-int main(int argc, char** argv){
+int main(int argc, char** argv) {
 
     ros::init(argc, argv, "bamvo");
     ros::AsyncSpinner spinner(1);
