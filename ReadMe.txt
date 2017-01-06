@@ -28,3 +28,16 @@
   rviz
   (rviz) Change "Fixed Frame" variable to "odom" in Global Options
   (rviz) Add "TF" visulization
+
+
+## Citation
+@article{kim2016effective,
+  title={Effective Background Model-Based RGB-D Dense Visual Odometry in a Dynamic Environment},
+  author={Kim, Deok-Hwa and Kim, Jong-Hwan},
+  journal={IEEE Transactions on Robotics},
+  volume={32},
+  number={6},
+  pages={1565--1573},
+  year={2016},
+  publisher={IEEE}
+}
