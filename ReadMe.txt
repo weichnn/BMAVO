@@ -19,7 +19,7 @@
 
 ## Run
 1. Launch openni2 node
-  roslaunch openni2_launch openni2.launch
+  roslaunch openni2_launch openni2.launch depth_registration:=true auto_exposure:=false auto_white_balance:=false
 
 2. Launch bamvo node
   roslaunch bamvo bamvo.launch
