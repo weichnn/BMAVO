@@ -30,7 +30,8 @@
   (rviz) Add "TF" visulization
 
 
-## Citation
+## Cite us
+if you use BaMVO for a publication, please cite it as:
 @article{kim2016effective,
   title={Effective Background Model-Based RGB-D Dense Visual Odometry in a Dynamic Environment},
   author={Kim, Deok-Hwa and Kim, Jong-Hwan},
