@@ -8,7 +8,7 @@
   <arg name="base_frame_id"         default="$(arg camera)_link" />
   <arg name="enable_odom"           default="true" />
   <arg name="enable_odom_tf"        default="true" />
-  <arg name="depth"                 default="depth"/>
+  <arg name="depth"                 default="depth_registered"/>
   <arg name="rgb"                   default="rgb"/>
 
   <arg name="debug" default="false" />
