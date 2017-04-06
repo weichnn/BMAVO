@@ -135,6 +135,9 @@ void callback(
     if(g_enable_odom_tf) {
         tf::Transform odom_tf;
         tf::transformEigenToTF(global_pose_eigen, odom_tf);
+        tf::Quaternion norm_quat = odom_tf.getRotation();
+        norm_quat.normalize();
+        odom_tf.setRotation(norm_quat);
         tf_broadcaster_ptr->sendTransform(tf::StampedTransform(odom_tf, received_time, g_odom_frame_name,  g_base_frame_name));
     }
 

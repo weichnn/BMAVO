@@ -257,7 +257,7 @@ private:
                       0.,      0.,      0.,      0.;
                 Eigen::Matrix4f odom_slice = twist.exp();
 
-                odometry = odometry * odom_slice;
+                odometry = odom_slice * odometry;
             }
         }
 
