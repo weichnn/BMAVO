@@ -61,7 +61,6 @@ bool g_enable_odom_tf;
 bool g_enable_odom;
 
 std::string g_camera_name;
-std::string g_rgb_frame_name;
 std::string g_odom_frame_name;
 std::string g_base_frame_name;
 
@@ -74,8 +73,7 @@ void callback(
     tf::TransformListener* tf_listener_ptr,
     goodguy::bamvo* vo)
 {
-
-    ros::Time received_time = ros::Time::now();
+    std_msgs::Header received_header = image->header;
 
     cv::Mat rgb_in = cv_bridge::toCvShare(image,"bgr8")->image;
     cv::Mat depth_in = cv_bridge::toCvShare(depth)->image;
@@ -112,7 +110,7 @@ void callback(
 
     tf::StampedTransform base2rgb_tf;
     try {
-        tf_listener_ptr->lookupTransform(g_base_frame_name, g_rgb_frame_name, ros::Time(0), base2rgb_tf);
+        tf_listener_ptr->lookupTransform(g_base_frame_name, received_header.frame_id, ros::Time(0), base2rgb_tf);
     } catch (tf::TransformException& ex) {
         ROS_ERROR("TRANSFORM EXCEPTION: %s", ex.what());
         return;
@@ -126,8 +124,7 @@ void callback(
 
     geometry_msgs::PoseStamped local_camera_pose;
     tf::poseEigenToMsg(global_pose_eigen, local_camera_pose.pose);
-    local_camera_pose.header.stamp = received_time;
-    local_camera_pose.header.frame_id = g_rgb_frame_name;
+    local_camera_pose.header = received_header; 
 
     geometry_msgs::PoseStamped global_pose;
     tf::poseEigenToMsg(global_pose_eigen, global_pose.pose);
@@ -138,15 +135,15 @@ void callback(
         tf::Quaternion norm_quat = odom_tf.getRotation();
         norm_quat.normalize();
         odom_tf.setRotation(norm_quat);
-        tf_broadcaster_ptr->sendTransform(tf::StampedTransform(odom_tf, received_time, g_odom_frame_name,  g_base_frame_name));
+        tf_broadcaster_ptr->sendTransform(tf::StampedTransform(odom_tf, received_header.stamp, g_odom_frame_name,  g_base_frame_name));
     }
 
     if(g_enable_odom) {
         nav_msgs::Odometry odom_nav;
-        odom_nav.header.stamp = received_time;
+        odom_nav.header = received_header;
+        odom_nav.header.frame_id = g_odom_frame_name;
 
         odom_nav.child_frame_id = g_base_frame_name;
-        odom_nav.header.frame_id = g_odom_frame_name;
         odom_nav.pose.pose = global_pose.pose;
 
         pub_odom.publish(odom_nav);
@@ -174,7 +171,6 @@ int main(int argc, char** argv) {
 
     local_nh.getParam("scale", g_scale);
     local_nh.getParam("camera", g_camera_name);
-    local_nh.getParam("rgb_frame_id", g_rgb_frame_name);
     local_nh.getParam("odom_frame_id", g_odom_frame_name);
     local_nh.getParam("base_frame_id", g_base_frame_name);
     local_nh.getParam("enable_odom_tf", g_enable_odom_tf);
