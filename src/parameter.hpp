@@ -55,7 +55,7 @@ struct bamvo_parameter {
         camera_params.cx = 292.782603;
         camera_params.cy = 226.667207;
 
-        hist_size = 4;
+        hist_size = 5;
         depth_diff_max = 0.2; // metric unit
 
         bgm_level = 1.0; // Same as level for image pyramid
