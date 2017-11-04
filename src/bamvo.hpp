@@ -59,17 +59,20 @@ class bamvo {
 public:
     bamvo() : m_global_pose(Eigen::Matrix4f::Identity()) { }
 
-    void add(const cv::Mat& color, const cv::Mat& depth) {
+    Eigen::Matrix4f add(const cv::Mat& color, const cv::Mat& depth) {
+        Eigen::Matrix4f odometry = Eigen::Matrix4f::Identity();
         if(depth.type() != CV_32FC1 || color.type() != CV_8UC3) {
             std::cerr << "Not supported data type!" << std::endl;
-            return;
+            return odometry;
         }
 
         if(m_curr_rgbd_pyramid.size() != 0) {
             m_hist_poses.emplace_back(std::make_shared<Eigen::Matrix4f>(Eigen::Matrix4f(Eigen::Matrix4f::Identity())));
             m_hist_depth.emplace_back(m_curr_rgbd_pyramid[m_param.bgm_level]->get_depth());
+            m_hist_intensity.emplace_back(m_curr_rgbd_pyramid[m_param.bgm_level]->get_intensity());
 
             if(m_hist_depth.size() > m_param.hist_size) {
+                m_hist_intensity.pop_front();
                 m_hist_depth.pop_front();
                 m_hist_poses.pop_front();
             }
@@ -112,7 +115,7 @@ public:
 
 
         // Compute background model image
-        std::pair<std::shared_ptr<Eigen::MatrixXf>, std::shared_ptr<Eigen::MatrixXf>> bgm_set = compute_bgm(m_hist_depth, m_hist_poses, m_curr_rgbd_pyramid[m_param.bgm_level]->get_param());
+        std::pair<std::shared_ptr<Eigen::MatrixXf>, std::shared_ptr<Eigen::MatrixXf>> bgm_set = compute_bgm(m_hist_intensity, m_hist_depth, m_hist_poses, m_curr_rgbd_pyramid[m_param.bgm_level]->get_param());
 
         std::vector<std::shared_ptr<Eigen::MatrixXf>> bgm, labeled_bgm;
 
@@ -140,29 +143,24 @@ public:
         }
 
 
-        // Show pyramid for RGB-D
-        if(false)
-            for(std::size_t i = 0; i < m_param.iter_count.size(); ++i) {
-                cv::Mat bgm_cv = eigen2cv(*bgm[i]);
-                cv::Mat labeled_bgm_cv = eigen2cv(*labeled_bgm[i]);
-                cv::imshow(std::string("BGM ")+boost::lexical_cast<std::string>(i), bgm_cv/20.0);
-                cv::imshow(std::string("LABELED BGM ")+boost::lexical_cast<std::string>(i), labeled_bgm_cv);
-            }
-        else {
-            if(bgm.size() > 0) {
-                cv::Mat bgm_cv = eigen2cv(*bgm[0]);
-                cv::Mat labeled_bgm_cv = eigen2cv(*labeled_bgm[0]);
-                cv::imshow(std::string("BGM ")+boost::lexical_cast<std::string>(0), bgm_cv/20.0);
-                cv::imshow(std::string("LABELED BGM ")+boost::lexical_cast<std::string>(0), labeled_bgm_cv);
-            }
+        // Show BGM
+        if(bgm.size() > 0) {
+            cv::Mat bgm_cv = eigen2cv(*bgm[0]);
+            cv::Mat labeled_bgm_cv = eigen2cv(*labeled_bgm[0]);
+            cv::imshow(std::string("BGM ")+boost::lexical_cast<std::string>(0), bgm_cv/20.0);
+            cv::imshow(std::string("LABELED BGM ")+boost::lexical_cast<std::string>(0), labeled_bgm_cv);
+            m_bgm = bgm[0];
+        }
+        else{
+            m_bgm = NULL;
         }
 
 
         if(m_prev_rgbd_pyramid.size() != 0) {
             // Compute Odometry
-            Eigen::Matrix4f curr_pose = compute_odometry(m_prev_rgbd_pyramid, m_curr_rgbd_pyramid, bgm, labeled_bgm, m_param.iter_count);
+            odometry = compute_odometry(m_prev_rgbd_pyramid, m_curr_rgbd_pyramid, bgm, labeled_bgm, m_param.iter_count);
 
-            Eigen::Matrix4f log_curr_pose = curr_pose.log();
+            Eigen::Matrix4f log_curr_pose = odometry.log();
             Eigen::VectorXf vel_curr_pose(6);
             vel_curr_pose(0) = -log_curr_pose(0,1);
             vel_curr_pose(1) = log_curr_pose(0,2);
@@ -172,21 +170,24 @@ public:
             vel_curr_pose(5) = log_curr_pose(2,3);
             if(vel_curr_pose.norm() > 0.5) {
                 std::cout << "============================= Odometry calculation is failed!! =========" << std::endl;
-                curr_pose = Eigen::Matrix4f::Identity();
+                odometry = Eigen::Matrix4f::Identity();
                 m_hist_poses.clear();
                 m_hist_depth.clear();
+                m_hist_intensity.clear();
             }
             else {
                 // Current pose between current image and previous in the previous view point(t->t-1)
-                *(m_hist_poses.back()) = curr_pose;
+                *(m_hist_poses.back()) = odometry;
             }
 
 
 
 
-            m_global_pose =  curr_pose * m_global_pose;
+            m_global_pose =  odometry * m_global_pose;
 
         }
+
+        return odometry;
 
     }
 
@@ -213,6 +214,8 @@ private:
 
     {
         Eigen::Matrix4f odometry = Eigen::Matrix4f::Identity();
+        static Eigen::Matrix4f prev_odometry = Eigen::Matrix4f::Identity();
+        odometry = prev_odometry;
 
         if(prev_rgbd_pyramid.size() != curr_rgbd_pyramid.size()
                 && prev_rgbd_pyramid.size() != bgm_pyramid.size()
@@ -260,6 +263,8 @@ private:
                 odometry = odom_slice * odometry;
             }
         }
+
+        prev_odometry = odometry;
 
         return odometry;
     }
@@ -780,12 +785,13 @@ private:
         }
     }
 
-    std::shared_ptr<Eigen::MatrixXf> warp_depth(const Eigen::MatrixXf& depth, const Eigen::Matrix4f& pose, const goodguy::camera_parameter& cparam) {
+    std::pair<std::shared_ptr<Eigen::MatrixXf>,std::shared_ptr<Eigen::MatrixXf>> warp_depth(const Eigen::MatrixXf& depth, const Eigen::MatrixXf& intensity, const Eigen::Matrix4f& pose, const goodguy::camera_parameter& cparam) {
 
         const int rows = depth.rows();
         const int cols = depth.cols();
 
         std::shared_ptr<Eigen::MatrixXf> warped_depth(new Eigen::MatrixXf(rows, cols));
+        std::shared_ptr<Eigen::MatrixXf> warped_intensity(new Eigen::MatrixXf(rows, cols));
 
         const float& fx = cparam.fx;
         const float& fy = cparam.fy;
@@ -803,6 +809,7 @@ private:
         Eigen::Vector3f Kt = K*pose.block<3,1>(0,3);
 
         __m128* depth_sse = (__m128*)depth.data();
+        __m128* intensity_sse = (__m128*)intensity.data();
 
         __m128 KRK_inv_0_0 = _mm_set_ps1(KRK_inv(0,0));
         __m128 KRK_inv_0_1 = _mm_set_ps1(KRK_inv(0,1));
@@ -840,6 +847,7 @@ private:
                     y0_sse = _mm_add_ps(y0_sse, inc);
 
                     __m128 d0 = depth_sse[x0*rows/4+y0];
+                    __m128 i0 = intensity_sse[x0*rows/4+y0];
 
                     __m128 d0_available = _mm_and_ps(_mm_cmpge_ps(d0, depth_min), _mm_cmpge_ps(depth_max, d0));
 
@@ -873,6 +881,7 @@ private:
                     for(int i = 0; i < 4; ++i) {
                         if(((float*)&d0_available)[i]) {
                             (*warped_depth)(((float*)&y1_warp_int)[i], ((float*)&x1_warp_int)[i]) = ((float*)&d1_warp)[i];
+                            (*warped_intensity)(((float*)&y1_warp_int)[i], ((float*)&x1_warp_int)[i]) = ((float*)&i0)[i];
                         }
                     }
                 }
@@ -881,10 +890,11 @@ private:
         tbb::parallel_for(tbb::blocked_range<int>(0,cols), lambda_for_warp);
 
 
-        return warped_depth;
+        return std::make_pair(warped_depth, warped_intensity);
     }
 
     std::pair<std::shared_ptr<Eigen::MatrixXf>, std::shared_ptr<Eigen::MatrixXf>> compute_bgm(
+                const std::deque<std::shared_ptr<Eigen::MatrixXf>>& intensity,
                 const std::deque<std::shared_ptr<Eigen::MatrixXf>>& depth,
                 const std::deque<std::shared_ptr<Eigen::Matrix4f>>& poses,
                 const goodguy::camera_parameter& param)
@@ -910,19 +920,39 @@ private:
         }
 
         std::vector<std::shared_ptr<Eigen::MatrixXf>> depth_differences(depth.size()-1);
-        const std::shared_ptr<Eigen::MatrixXf> last_hist_depth = warp_depth(*depth.back(), poses_accumulate.back(), param);
+        std::vector<std::shared_ptr<Eigen::MatrixXf>> intensity_differences(depth.size()-1);
+
+        auto last_hist_images = warp_depth(*depth.back(), *intensity.back(), poses_accumulate.back(), param);
+
+        const std::shared_ptr<Eigen::MatrixXf> last_hist_depth = last_hist_images.first;
+        const std::shared_ptr<Eigen::MatrixXf> last_hist_intensity = last_hist_images.second;
         auto lambda_for_calculate_depth_difference = [&](const tbb::blocked_range<std::size_t>& r) {
             for(std::size_t k = r.begin(); k < r.end(); ++k) {
-                std::shared_ptr<Eigen::MatrixXf> warped_depth = warp_depth(*depth[k], poses_accumulate[k], param);
+                std::pair<std::shared_ptr<Eigen::MatrixXf>, std::shared_ptr<Eigen::MatrixXf>> warped_images = warp_depth(*depth[k], *intensity[k], poses_accumulate[k], param);
+                std::shared_ptr<Eigen::MatrixXf> warped_depth = warped_images.first;
+                std::shared_ptr<Eigen::MatrixXf> warped_intensity = warped_images.second;
                 depth_differences[k] = std::make_shared<Eigen::MatrixXf>(Eigen::MatrixXf(rows, cols));
+                intensity_differences[k] = std::make_shared<Eigen::MatrixXf>(Eigen::MatrixXf(rows, cols));
                 *(depth_differences[k]) = (*last_hist_depth - *warped_depth).cwiseAbs();
+                *(intensity_differences[k]) = (*last_hist_intensity - *warped_intensity).cwiseAbs();
             }
         };
         tbb::parallel_for(tbb::blocked_range<std::size_t>(0,depth.size()-1), lambda_for_calculate_depth_difference);
 
 
-        std::shared_ptr<Eigen::MatrixXf> sigma = calculate_sigma(depth_differences);
-        std::shared_ptr<Eigen::MatrixXf> bgm = calculate_bgm_impl(depth_differences, last_hist_depth, sigma);
+        auto sigmas = calculate_sigma(depth_differences, intensity_differences);
+        std::shared_ptr<Eigen::MatrixXf> sigma_depth = sigmas.first; 
+        std::shared_ptr<Eigen::MatrixXf> sigma_intensity = sigmas.second; 
+        std::shared_ptr<Eigen::MatrixXf> bgm = calculate_bgm_impl(depth_differences, intensity_differences, last_hist_depth, sigma_depth, sigma_intensity);
+
+        if(bgm != NULL) {
+        cv::Mat bgm_cv = eigen2cv(*bgm);
+        cv::Mat bgm_filtered_cv;
+        cv::bilateralFilter(bgm_cv, bgm_filtered_cv, 5, 0.02, 0.02);
+        cv::imshow("Filter", bgm_filtered_cv/10.0);
+        (*bgm) = cv2eigen(bgm_filtered_cv);
+        }
+
 
         std::shared_ptr<Eigen::MatrixXf> labeled_bgm = calculate_labeled_bgm_impl_sse(bgm);
 
@@ -996,7 +1026,13 @@ private:
         return labeled_bgm;
     }
 
-    std::shared_ptr<Eigen::MatrixXf> calculate_bgm_impl(const std::vector<std::shared_ptr<Eigen::MatrixXf>>& depth_differences, const std::shared_ptr<Eigen::MatrixXf>& last_depth, const std::shared_ptr<Eigen::MatrixXf>& sigma) {
+    std::shared_ptr<Eigen::MatrixXf> calculate_bgm_impl(
+            const std::vector<std::shared_ptr<Eigen::MatrixXf>>& depth_differences,
+            const std::vector<std::shared_ptr<Eigen::MatrixXf>>& intensity_differences,
+            const std::shared_ptr<Eigen::MatrixXf>& last_depth,
+            const std::shared_ptr<Eigen::MatrixXf>& sigma_depth, 
+            const std::shared_ptr<Eigen::MatrixXf>& sigma_intensity) 
+    {
         if(depth_differences.size() == 0) {
             return std::shared_ptr<Eigen::MatrixXf>();
         }
@@ -1012,19 +1048,28 @@ private:
         auto lambda_for_bgm = [&](const tbb::blocked_range<int>& r) {
             for(int i = r.begin(); i < r.end(); ++i) {
                 for(int j = 0; j < cols; ++j) {
-                    float sigma_val_inv = 1/(*sigma)(i,j);
-                    float bgm_val = 0;
+                    float sigma_depth_val_inv = 1/(*sigma_depth)(i,j);
+                    float sigma_intensity_val_inv = 1/(*sigma_intensity)(i,j);
+                    float bgm_depth_val = 0;
+                    float bgm_intensity_val = 0;
 
                     for(std::size_t k = 0; k < depth_differences.size(); ++k) {
-                        float exp_in = (*depth_differences[k])(i,j)*sigma_val_inv;
-                        bgm_val += std::exp(-0.5*exp_in*exp_in);
+                        float exp_in = (*depth_differences[k])(i,j)*sigma_depth_val_inv;
+                        bgm_depth_val += std::exp(-0.5*exp_in*exp_in);
+                    }
+                    for(std::size_t k = 0; k < intensity_differences.size(); ++k) {
+                        float exp_in = (*intensity_differences[k])(i,j)*sigma_intensity_val_inv;
+                        bgm_intensity_val += std::exp(-0.5*exp_in*exp_in);
                     }
 
-                    bgm_val = bgm_val*pre*sigma_val_inv*(1.0/(float)depth_differences.size());
-
                     float last_depth_val = (*last_depth)(i,j);
+                    bgm_depth_val = bgm_depth_val*pre*sigma_depth_val_inv*(1.0/(float)depth_differences.size())*last_depth_val;
+                    bgm_intensity_val = bgm_intensity_val*pre*sigma_intensity_val_inv*(1.0/(float)intensity_differences.size());
+
                     if(last_depth_val < m_param.range_bgm.max && last_depth_val > m_param.range_bgm.min) {
-                        (*bgm)(i,j) = bgm_val;
+                        if(bgm_intensity_val > 10.0 ) bgm_intensity_val = 10.0;
+                        (*bgm)(i,j) = bgm_depth_val*bgm_intensity_val;
+                        //(*bgm)(i,j) = bgm_depth_val*bgm_intensity_val;
                     }
                     else {
                         (*bgm)(i,j) = 0.0;
@@ -1039,15 +1084,19 @@ private:
     }
 
 
-    std::shared_ptr<Eigen::MatrixXf> calculate_sigma(const std::vector<std::shared_ptr<Eigen::MatrixXf>>& depth_differences) {
+    std::pair<std::shared_ptr<Eigen::MatrixXf>, std::shared_ptr<Eigen::MatrixXf>> calculate_sigma(
+            const std::vector<std::shared_ptr<Eigen::MatrixXf>>& depth_differences,
+            const std::vector<std::shared_ptr<Eigen::MatrixXf>>& intensity_differences) 
+    {
         if(depth_differences.size() == 0) {
-            return std::shared_ptr<Eigen::MatrixXf>();
+            return std::make_pair(std::shared_ptr<Eigen::MatrixXf>(), std::shared_ptr<Eigen::MatrixXf>());
         }
 
         const int& rows = depth_differences[0]->rows();
         const int& cols = depth_differences[0]->cols();
 
         std::shared_ptr<Eigen::MatrixXf> sigma(new Eigen::MatrixXf(Eigen::MatrixXf::Zero(rows,cols)));
+        std::shared_ptr<Eigen::MatrixXf> sigma_intensity(new Eigen::MatrixXf(Eigen::MatrixXf::Zero(rows,cols)));
 
         auto lambda_for_sigma = [&](const tbb::blocked_range<int>& r) {
             for(int i = r.begin(); i < r.end(); ++i) {
@@ -1056,10 +1105,23 @@ private:
                     for(std::size_t k = 0; k < depth_differences.size(); ++k) {
                         diff.emplace_back((*depth_differences[k])(i,j));
                     }
+                    std::vector<float> diff_intensity;
+                    for(std::size_t k = 0; k < intensity_differences.size(); ++k) {
+                        diff_intensity.emplace_back((*intensity_differences[k])(i,j));
+                    }
                     std::sort(diff.begin(), diff.end());
+                    std::sort(diff_intensity.begin(), diff_intensity.end());
                     float median = diff[diff.size()/2];
+                    float median_intensity = diff_intensity[diff_intensity.size()/2];
                     float sigma_val = median/0.6744/std::sqrt(2);
+                    float sigma_val_intensity = median_intensity/0.6744/std::sqrt(2);
 
+                    if(sigma_val_intensity < std::numeric_limits<float>::epsilon()) {
+                        (*sigma_intensity)(i,j) = std::numeric_limits<float>::epsilon();
+                    }
+                    else {
+                        (*sigma_intensity)(i,j) = median_intensity/0.6744/std::sqrt(2);
+                    }
                     if(sigma_val < std::numeric_limits<float>::epsilon()) {
                         (*sigma)(i,j) = std::numeric_limits<float>::epsilon();
                     }
@@ -1073,21 +1135,26 @@ private:
         tbb::parallel_for(tbb::blocked_range<int>(0,rows), lambda_for_sigma);
 
 
-        return sigma;
+        return std::make_pair(sigma, sigma_intensity);
     }
 
+public:
 
 
-    inline Eigen::MatrixXf cv2eigen(const cv::Mat& depth) {
+    static Eigen::MatrixXf cv2eigen(const cv::Mat& depth) {
         Eigen::MatrixXf depth_eigen;
         cv::cv2eigen(depth, depth_eigen);
         return depth_eigen;
     }
 
-    inline cv::Mat eigen2cv(const Eigen::MatrixXf& depth) {
+    static cv::Mat eigen2cv(const Eigen::MatrixXf& depth) {
         cv::Mat depth_cv;
         cv::eigen2cv(depth,depth_cv);
         return depth_cv;
+    }
+
+    std::shared_ptr<Eigen::MatrixXf> get_bgm(){
+        return m_bgm;
     }
 
 
@@ -1096,8 +1163,9 @@ private:
     std::vector<std::shared_ptr<goodguy::rgbd_image>> m_curr_rgbd_pyramid;
     std::vector<std::shared_ptr<goodguy::rgbd_image>> m_prev_rgbd_pyramid;
 
-    Eigen::MatrixXf m_bgm;
+    std::shared_ptr<Eigen::MatrixXf> m_bgm;
 
+    std::deque<std::shared_ptr<Eigen::MatrixXf>> m_hist_intensity;
     std::deque<std::shared_ptr<Eigen::MatrixXf>> m_hist_depth;
     std::deque<std::shared_ptr<Eigen::Matrix4f>> m_hist_poses;
 

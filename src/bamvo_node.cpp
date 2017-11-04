@@ -47,6 +47,7 @@
 #include <message_filters/sync_policies/approximate_time.h>
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/CameraInfo.h>
+#include <geometry_msgs/PoseStamped.h>
 
 
 #include <opencv2/opencv.hpp>
@@ -69,6 +70,8 @@ void callback(
     const sensor_msgs::ImageConstPtr& depth,
     const sensor_msgs::CameraInfoConstPtr& camera_info,
     ros::Publisher pub_odom,
+    ros::Publisher pub_pose,
+    ros::Publisher pub_bgm,
     tf::TransformBroadcaster* tf_broadcaster_ptr,
     tf::TransformListener* tf_listener_ptr,
     goodguy::bamvo* vo)
@@ -104,9 +107,30 @@ void callback(
     cv::resize(rgb_in, rgb_resize, compute_size);
     cv::resize(depth_meter, depth_resize, compute_size);
 
-    vo->add(rgb_resize, depth_resize);
+    Eigen::Matrix4f odometry = vo->add(rgb_resize, depth_resize);
 
     Eigen::Matrix4f curr_pose = vo->get_current_pose().inverse();
+
+    Eigen::Affine3d odometry_affine(odometry.cast<double>().inverse());
+    geometry_msgs::PoseStamped pose_msg;
+    pose_msg.header = received_header;
+    tf::poseEigenToMsg(odometry_affine, pose_msg.pose);
+    pub_pose.publish(pose_msg);
+
+
+    cv_bridge::CvImage cv_bgm;
+    auto bgm = vo->get_bgm();
+    cv_bgm.header = received_header;
+    cv_bgm.image = cv::Mat::ones(compute_size, CV_32FC1);
+    cv_bgm.encoding = "32FC1";
+    if(bgm != NULL){
+        cv::Mat bgm_bamvo = goodguy::bamvo::eigen2cv(*bgm);
+        cv::resize(bgm_bamvo, cv_bgm.image, compute_size);
+    }
+
+    pub_bgm.publish(cv_bgm);
+
+    
 
     tf::StampedTransform base2rgb_tf;
     try {
@@ -186,6 +210,8 @@ int main(int argc, char** argv) {
     goodguy::bamvo vo;
 
     ros::Publisher pub_odom = local_nh.advertise<nav_msgs::Odometry>(g_odom_frame_name, 50);
+    ros::Publisher pub_bgm  = nh.advertise<sensor_msgs::Image>(g_camera_name + std::string("/bamvo/image_raw"), 50);
+    ros::Publisher pub_pose = nh.advertise<geometry_msgs::PoseStamped>(g_camera_name + std::string("/bamvo/pose"), 50);
 
     tf::TransformBroadcaster tf_broadcaster;
     tf::TransformListener tf_listener;
@@ -197,7 +223,7 @@ int main(int argc, char** argv) {
     typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::Image, sensor_msgs::CameraInfo> RGBDSyncPolicy;
     message_filters::Synchronizer<RGBDSyncPolicy> sync(RGBDSyncPolicy(10), image_sub, depth_sub, camera_info_sub);
 
-    sync.registerCallback(boost::bind(&callback, _1, _2, _3, pub_odom, &tf_broadcaster, &tf_listener, &vo));
+    sync.registerCallback(boost::bind(&callback, _1, _2, _3, pub_odom, pub_pose, pub_bgm, &tf_broadcaster, &tf_listener, &vo));
 
 
     ros::waitForShutdown();
