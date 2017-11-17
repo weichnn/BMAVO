@@ -57,7 +57,7 @@
 namespace goodguy {
 class bamvo {
 public:
-    bamvo() : m_global_pose(Eigen::Matrix4f::Identity()) { }
+    bamvo() : m_global_pose(Eigen::Matrix4f::Identity()), m_velocity(Eigen::Matrix4f::Identity()) { }
 
     Eigen::Matrix4f add(const cv::Mat& color, const cv::Mat& depth) {
         Eigen::Matrix4f odometry = Eigen::Matrix4f::Identity();
@@ -168,16 +168,18 @@ public:
             vel_curr_pose(3) = log_curr_pose(0,3);
             vel_curr_pose(4) = log_curr_pose(1,3);
             vel_curr_pose(5) = log_curr_pose(2,3);
-            if(vel_curr_pose.norm() > 0.5) {
+            if(vel_curr_pose.norm() > 0.2) {
                 std::cout << "============================= Odometry calculation is failed!! =========" << std::endl;
                 odometry = Eigen::Matrix4f::Identity();
                 m_hist_poses.clear();
                 m_hist_depth.clear();
                 m_hist_intensity.clear();
+                m_velocity = Eigen::Matrix4f::Identity();
             }
             else {
                 // Current pose between current image and previous in the previous view point(t->t-1)
                 *(m_hist_poses.back()) = odometry;
+                m_velocity = odometry;
             }
 
 
@@ -213,9 +215,8 @@ private:
         const std::vector<int>& iter_count)
 
     {
-        Eigen::Matrix4f odometry = Eigen::Matrix4f::Identity();
-        static Eigen::Matrix4f prev_odometry = Eigen::Matrix4f::Identity();
-        odometry = prev_odometry;
+        Eigen::Matrix4f odometry = Eigen::Matrix4f::Identity(); 
+        odometry = m_velocity;
 
         if(prev_rgbd_pyramid.size() != curr_rgbd_pyramid.size()
                 && prev_rgbd_pyramid.size() != bgm_pyramid.size()
@@ -263,8 +264,6 @@ private:
                 odometry = odom_slice * odometry;
             }
         }
-
-        prev_odometry = odometry;
 
         return odometry;
     }
@@ -949,7 +948,7 @@ private:
         cv::Mat bgm_cv = eigen2cv(*bgm);
         cv::Mat bgm_filtered_cv;
         cv::bilateralFilter(bgm_cv, bgm_filtered_cv, 5, 0.02, 0.02);
-        cv::imshow("Filter", bgm_filtered_cv/10.0);
+        cv::imshow("Filter", bgm_filtered_cv/50.0);
         (*bgm) = cv2eigen(bgm_filtered_cv);
         }
 
@@ -1068,8 +1067,8 @@ private:
 
                     if(last_depth_val < m_param.range_bgm.max && last_depth_val > m_param.range_bgm.min) {
                         if(bgm_intensity_val > 10.0 ) bgm_intensity_val = 10.0;
-                        (*bgm)(i,j) = bgm_depth_val*bgm_intensity_val;
                         //(*bgm)(i,j) = bgm_depth_val*bgm_intensity_val;
+                        (*bgm)(i,j) = bgm_depth_val;
                     }
                     else {
                         (*bgm)(i,j) = 0.0;
@@ -1172,6 +1171,7 @@ private:
     bamvo_parameter m_param;
 
     Eigen::Matrix4f m_global_pose;
+    Eigen::Matrix4f m_velocity;
 
 
 };

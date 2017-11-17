@@ -49,12 +49,16 @@
 #include <sensor_msgs/CameraInfo.h>
 #include <geometry_msgs/PoseStamped.h>
 
+#include <boost/lexical_cast.hpp>
+#include <string>
+#include <fstream>
 
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/eigen.hpp>
 
 #include "bamvo.hpp"
 
+std::string g_dir("/home/goodguy/bamvo_data");
 
 float g_scale;
 
@@ -110,6 +114,13 @@ void callback(
     Eigen::Matrix4f odometry = vo->add(rgb_resize, depth_resize);
 
     Eigen::Matrix4f curr_pose = vo->get_current_pose().inverse();
+
+    static int idx = 0;
+    std::string odom_file_name = g_dir + std::string("/odom_") + boost::lexical_cast<std::string>(++idx) + std::string(".txt");
+    std::ofstream odom_file(odom_file_name, std::ofstream::trunc);
+    odom_file << curr_pose.inverse();
+    odom_file.close();
+    
 
     Eigen::Affine3d odometry_affine(odometry.cast<double>().inverse());
     geometry_msgs::PoseStamped pose_msg;
