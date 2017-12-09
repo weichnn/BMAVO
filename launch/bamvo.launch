@@ -10,12 +10,14 @@
   <arg name="enable_odom_tf"        default="true" />
   <arg name="depth"                 default="depth_registered"/>
   <arg name="rgb"                   default="rgb"/>
+  <arg name="save_loc"              default="$(env HOME)/bamvo_data"/>
 
   <arg name="debug" default="false" />
   <arg unless="$(arg debug)" name="launch_prefix" value="" />
   <arg     if="$(arg debug)" name="launch_prefix" value="gdb -ex run --args" />
 
   <node name="bamvo" pkg="bamvo" type="bamvo_node" output="screen" required="true" launch-prefix="$(arg launch_prefix)">
+    <param name="save_loc"              value="$(arg save_loc)"/>
     <param name="scale"                 value="$(arg scale)"/>
     <param name="camera"                value="$(arg camera)"/>
     <param name="depth_image"           value="$(arg depth)/image_raw"/>

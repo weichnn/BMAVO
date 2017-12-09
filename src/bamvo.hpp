@@ -168,7 +168,7 @@ public:
             vel_curr_pose(3) = log_curr_pose(0,3);
             vel_curr_pose(4) = log_curr_pose(1,3);
             vel_curr_pose(5) = log_curr_pose(2,3);
-            if(vel_curr_pose.norm() > 0.2) {
+            if(vel_curr_pose.norm() > 0.4) {
                 std::cout << "============================= Odometry calculation is failed!! =========" << std::endl;
                 odometry = Eigen::Matrix4f::Identity();
                 m_hist_poses.clear();
@@ -1062,6 +1062,7 @@ private:
                     }
 
                     float last_depth_val = (*last_depth)(i,j);
+                    //bgm_depth_val = bgm_depth_val*pre*sigma_depth_val_inv*(1.0/(float)depth_differences.size());
                     bgm_depth_val = bgm_depth_val*pre*sigma_depth_val_inv*(1.0/(float)depth_differences.size())*last_depth_val;
                     bgm_intensity_val = bgm_intensity_val*pre*sigma_intensity_val_inv*(1.0/(float)intensity_differences.size());
 

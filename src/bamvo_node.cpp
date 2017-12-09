@@ -56,6 +56,9 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/core/eigen.hpp>
 
+#include <boost/filesystem.hpp>
+
+
 #include "bamvo.hpp"
 
 std::string g_dir("/home/goodguy/bamvo_data");
@@ -155,7 +158,7 @@ void callback(
     tf::transformTFToEigen(base2rgb_tf, base2rgb_eigen);
 
     Eigen::Affine3d global_pose_eigen(curr_pose.cast<double>());
-    global_pose_eigen = base2rgb_eigen * global_pose_eigen * base2rgb_eigen.inverse();
+    //global_pose_eigen = base2rgb_eigen * global_pose_eigen * base2rgb_eigen.inverse();
 
     geometry_msgs::PoseStamped local_camera_pose;
     tf::poseEigenToMsg(global_pose_eigen, local_camera_pose.pose);
@@ -180,6 +183,19 @@ void callback(
 
         odom_nav.child_frame_id = g_base_frame_name;
         odom_nav.pose.pose = global_pose.pose;
+
+        tf::Transform odom_tf;
+        tf::transformEigenToTF(global_pose_eigen, odom_tf);
+        tf::Quaternion norm_quat = odom_tf.getRotation();
+        norm_quat.normalize();
+        odom_tf.setRotation(norm_quat);
+
+        Eigen::Affine3d normalized_pose;
+        tf::transformTFToEigen(odom_tf, normalized_pose);
+        tf::poseEigenToMsg(normalized_pose, odom_nav.pose.pose);
+
+
+
 
         pub_odom.publish(odom_nav);
 
@@ -213,6 +229,12 @@ int main(int argc, char** argv) {
     local_nh.getParam("depth_image", depth_image_name);
     local_nh.getParam("rgb_image", rgb_image_name);
     local_nh.getParam("camera_info", camera_info_name);
+    local_nh.getParam("save_loc", g_dir);
+
+    if(!boost::filesystem::exists(g_dir)){
+        std::cout << g_dir << std::endl;
+        boost::filesystem::create_directories(g_dir);
+    }
 
 
 
