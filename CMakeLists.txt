@@ -25,6 +25,7 @@ catkin_package(
 )
 
 include_directories(
+  ${PROJECT_SOURCE_DIR}/eigen
   ${catkin_INCLUDE_DIRS}
   ${TBB_INCLUDE_DIRS}
   ${Boost_INCLUDE_DIR}
