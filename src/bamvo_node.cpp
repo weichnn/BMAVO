@@ -146,17 +146,17 @@ void callback(
 
     
 
-    tf::StampedTransform base2rgb_tf;
-    try {
-        tf_listener_ptr->lookupTransform(g_base_frame_name, received_header.frame_id, ros::Time(0), base2rgb_tf);
-    } catch (tf::TransformException& ex) {
-        ROS_ERROR("TRANSFORM EXCEPTION: %s", ex.what());
-        return;
-    }
+  //  tf::StampedTransform base2rgb_tf;
+  //  try {
+  //      tf_listener_ptr->lookupTransform(g_base_frame_name, received_header.frame_id, ros::Time(0), base2rgb_tf);
+  //  } catch (tf::TransformException& ex) {
+   //     ROS_ERROR("TRANSFORM EXCEPTION: %s", ex.what());
+   //     return;
+   // }
 
-    Eigen::Affine3d base2rgb_eigen;
-    tf::transformTFToEigen(base2rgb_tf, base2rgb_eigen);
-
+   // Eigen::Affine3d base2rgb_eigen;
+   // tf::transformTFToEigen(base2rgb_tf, base2rgb_eigen);
+//
     Eigen::Affine3d global_pose_eigen(curr_pose.cast<double>());
     //global_pose_eigen = base2rgb_eigen * global_pose_eigen * base2rgb_eigen.inverse();
 
