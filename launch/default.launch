@@ -28,6 +28,14 @@
     <param name="base_frame_id"         value="$(arg base_frame_id)"/>
     <param name="enable_odom"           value="$(arg enable_odom)"/>
     <param name="enable_odom_tf"        value="$(arg enable_odom_tf)"/>
+    <param name="camera_fx"        value="570.3422241210938"/>
+    <param name="camera_fy"        value="570.3422241210938"/>
+    <param name="camera_cx"        value="319.5"/>
+    <param name="camera_cy"        value="239.5"/>
+    <param name="camera_width"        value="640"/>
+    <param name="camera_height"        value="480"/>
+
+
   </node>
 
 </launch>

@@ -72,10 +72,16 @@ std::string g_camera_name;
 std::string g_odom_frame_name;
 std::string g_base_frame_name;
 
+int camera_width;
+int camera_height;
+float camera_fx;
+float camera_fy;
+float camera_cx;
+float camera_cy;
+
 void callback(
     const sensor_msgs::ImageConstPtr& image,
     const sensor_msgs::ImageConstPtr& depth,
-    const sensor_msgs::CameraInfoConstPtr& camera_info,
     ros::Publisher pub_odom,
     ros::Publisher pub_pose,
     ros::Publisher pub_bgm,
@@ -100,13 +106,13 @@ void callback(
         return;
     }
 
-    int cols = camera_info->width*g_scale;
-    int rows = camera_info->height*g_scale;
+    int cols = camera_width*g_scale;
+    int rows = camera_height*g_scale;
 
-    vo->get_param().camera_params.fx = camera_info->K[0]*g_scale;
-    vo->get_param().camera_params.cx = camera_info->K[2]*g_scale;
-    vo->get_param().camera_params.fy = camera_info->K[4]*g_scale;
-    vo->get_param().camera_params.cy = camera_info->K[5]*g_scale;
+    vo->get_param().camera_params.fx = camera_fx*g_scale;
+    vo->get_param().camera_params.cx = camera_cx*g_scale;
+    vo->get_param().camera_params.fy = camera_fy*g_scale;
+    vo->get_param().camera_params.cy = camera_cy*g_scale;
 
 
     cv::Size compute_size(cols, rows);
@@ -230,6 +236,12 @@ int main(int argc, char** argv) {
     local_nh.getParam("rgb_image", rgb_image_name);
     local_nh.getParam("camera_info", camera_info_name);
     local_nh.getParam("save_loc", g_dir);
+    local_nh.getParam("camera_fx", camera_fx);
+    local_nh.getParam("camera_fy", camera_fy);
+    local_nh.getParam("camera_cx", camera_cx);
+    local_nh.getParam("camera_cy", camera_cy);
+    local_nh.getParam("camera_width", camera_width);
+    local_nh.getParam("camera_height", camera_height);
 
     if(!boost::filesystem::exists(g_dir)){
         std::cout << g_dir << std::endl;
@@ -237,7 +249,7 @@ int main(int argc, char** argv) {
     }
 
 
-
+    std::cout << "the camera info: " << camera_fx << " " << camera_fy << " " << camera_cx << " " << camera_cy << " " << camera_width << " " << camera_height << std::endl;
 
 
     goodguy::bamvo vo;
@@ -251,12 +263,12 @@ int main(int argc, char** argv) {
 
     message_filters::Subscriber<sensor_msgs::Image> image_sub(nh, g_camera_name + std::string("/") + rgb_image_name, 10);
     message_filters::Subscriber<sensor_msgs::Image> depth_sub(nh, g_camera_name + std::string("/") + depth_image_name, 10);
-    message_filters::Subscriber<sensor_msgs::CameraInfo> camera_info_sub(nh, g_camera_name + std::string("/") + camera_info_name, 10);
+    // message_filters::Subscriber<sensor_msgs::CameraInfo> camera_info_sub(nh, g_camera_name + std::string("/") + camera_info_name, 10);
 
-    typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::Image, sensor_msgs::CameraInfo> RGBDSyncPolicy;
-    message_filters::Synchronizer<RGBDSyncPolicy> sync(RGBDSyncPolicy(10), image_sub, depth_sub, camera_info_sub);
+    typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::Image> RGBDSyncPolicy;
+    message_filters::Synchronizer<RGBDSyncPolicy> sync(RGBDSyncPolicy(10), image_sub, depth_sub);
 
-    sync.registerCallback(boost::bind(&callback, _1, _2, _3, pub_odom, pub_pose, pub_bgm, &tf_broadcaster, &tf_listener, &vo));
+    sync.registerCallback(boost::bind(&callback, _1, _2, pub_odom, pub_pose, pub_bgm, &tf_broadcaster, &tf_listener, &vo));
 
 
     ros::waitForShutdown();
