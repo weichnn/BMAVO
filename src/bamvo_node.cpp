@@ -79,6 +79,8 @@ float camera_fy;
 float camera_cx;
 float camera_cy;
 
+std::ofstream f_tum;
+
 void callback(
     const sensor_msgs::ImageConstPtr& image,
     const sensor_msgs::ImageConstPtr& depth,
@@ -123,6 +125,13 @@ void callback(
     Eigen::Matrix4f odometry = vo->add(rgb_resize, depth_resize);
 
     Eigen::Matrix4f curr_pose = vo->get_current_pose().inverse();
+
+    Eigen::Matrix3f Rwc = curr_pose.block<3,3>(0,0);
+    Eigen::Vector3f twc = curr_pose.block<3,1>(0,3);
+
+    Eigen::Quaternionf q(Rwc);
+
+    f_tum << std::setprecision(15) << received_header.stamp.toSec() << " " <<  std::setprecision(9) << twc[0] << " " << twc[1] << " " << twc[2] << " " << q.x() << " " << q.y() << " " << q.z() << " " << q.w() << std::endl;
 
     static int idx = 0;
     std::string odom_file_name = g_dir + std::string("/odom_") + boost::lexical_cast<std::string>(++idx) + std::string(".txt");
@@ -220,7 +229,7 @@ int main(int argc, char** argv) {
     ros::init(argc, argv, "bamvo");
     ros::AsyncSpinner spinner(1);
     spinner.start();
-
+    camera_fx = 0;
     ros::NodeHandle nh;
     ros::NodeHandle local_nh("~");
 
@@ -248,8 +257,16 @@ int main(int argc, char** argv) {
         boost::filesystem::create_directories(g_dir);
     }
 
-
+    
     std::cout << "the camera info: " << camera_fx << " " << camera_fy << " " << camera_cx << " " << camera_cy << " " << camera_width << " " << camera_height << std::endl;
+    std::string ss = "/home/ubuntu/comp/research_ws/cameratrajectroy.txt";
+    f_tum.open(ss.c_str()); 
+    std::cout << std::endl << "Saving camera trajectory to " << ss << " ..." << std::endl;
+    if (!f_tum.is_open() || camera_fx == 0) {
+        printf("failed...");
+        return 0;
+    }
+    
 
 
     goodguy::bamvo vo;
@@ -272,7 +289,7 @@ int main(int argc, char** argv) {
 
 
     ros::waitForShutdown();
-
+    f_tum.close();
     return 0;
 }
 
